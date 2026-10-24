@@ -1,0 +1,9 @@
+[project]
+name = "kinship"
+version = "0.1.0"
+description = "Tri-subject kinship verification (father, mother, child) from face images"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

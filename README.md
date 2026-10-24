@@ -1,0 +1,75 @@
+# Tri-Subject Kinship Verification from Face Images
+
+Given face images of a claimed **father**, **mother** and **child**, predict the
+probability that the child is their biological child, and show **which parent the
+child resembles more** (via a learned attention gate).
+
+> Status: **M1 done**; **M2 code ready** (alignment, embeddings, E0/E1, report, Kaggle notebook).
+> Results: *not run yet* (waiting for the first Kaggle GPU run). The full README comes in M5.
+
+## Pipeline (order of scripts)
+
+| Step | Script | What it does |
+|---|---|---|
+| 0 | `scripts/inspect_data.py` | detects the dataset format, prints/saves `outputs/data_summary.md` |
+| 1 | `scripts/extract_embeddings.py` *(M2)* | detect + align faces, ArcFace embeddings, gender/age estimates (cached) |
+| 2 | `scripts/prepare.py` | family-disjoint splits, triplets, negatives, pairs, `triplet_check.jpg` |
+| 3 | `scripts/evaluate.py` *(M2)* | E0 / E1 baselines and all later experiments |
+| 4 | `scripts/train_head.py`, `scripts/finetune_backbone.py` *(M3, M4)* | E2 / E2b / E3 |
+| 5 | `scripts/make_report.py` *(M5)* | `outputs/results.md` + plots |
+
+`extract_embeddings` runs **before** `prepare` because, for the Kaggle dataset
+(Option B), mining pseudo-triplets needs each person's estimated gender and age,
+and InsightFace produces those in the same pass as the embeddings.
+
+## Datasets
+
+* **Option A (preferred):** full FIW. Upload as a *private* Kaggle dataset (license).
+* **Option B (fallback):** Kaggle "Recognizing Faces in the Wild"; triplets are
+  *pseudo-triplets* mined from related pairs + estimated gender/age (noisy labels).
+
+The format is detected automatically from `paths.data_root`.
+
+## Local setup and tests (CPU)
+
+```bash
+pip install numpy pandas PyYAML Pillow scikit-learn matplotlib tqdm pytest
+python -m pytest -q
+# smoke run on synthetic data
+python scripts/make_synthetic.py --out data/synth_kaggle --format kaggle
+python scripts/inspect_data.py --data_root data/synth_kaggle --work_dir work --output_dir outputs
+python scripts/prepare.py --data_root data/synth_kaggle --work_dir work --output_dir outputs \
+    --attributes data/synth_kaggle/attributes_gt.csv
+```
+
+All settings are in `configs/default.yaml`; override any value with
+`--set key.sub=value`, or use the `--data_root/--work_dir/--output_dir` shortcuts.
+
+To run the real face models locally (CPU), use a separate virtual environment.
+InsightFace pulls in `onnx`, whose protobuf requirement can clash with other
+packages in a global Python install:
+
+```bash
+python -m venv .venv
+.venv/Scripts/python -m pip install -r requirements.txt      # Windows (Linux: .venv/bin/python)
+.venv/Scripts/python scripts/extract_embeddings.py --data_root data/fiw --work_dir work/fiw --output_dir outputs --limit 200
+```
+
+## Running on Kaggle
+
+**Option 1 - from GitHub (recommended).** Push this repo to GitHub, open
+`notebooks/kaggle_run.ipynb` on Kaggle (File → Import Notebook), check `REPO_URL`,
+attach the dataset, turn on GPU + Internet, then *Save Version → Save & Run All*.
+A **public** repo is simplest. A private repo needs a GitHub token stored as a
+Kaggle secret. The code contains no FIW images, so a public repo is fine.
+
+**Option 2 - repo as a Kaggle dataset.** Zip the repo (without `data/`, `work/`,
+`outputs/`, `.venv/`), upload it as a private Kaggle dataset (e.g. `kinship-code`),
+attach it, and set `CODE_DATASET = "kinship-code"` in the notebook instead of `REPO_URL`.
+
+**Package fixes on Kaggle** (all done in the notebook, explained in `requirements.txt`):
+`onnxruntime-gpu==1.22.0` (CUDA 12), `insightface==2.1 --no-deps` (avoids the
+CPU-only onnxruntime), `facenet-pytorch==2.6.0 --no-deps` (avoids a torch downgrade).
+
+Every stage is cached in `work_dir` and skipped when it is already done. Embedding
+extraction saves every 2,000 images, so a stopped session resumes where it left off.

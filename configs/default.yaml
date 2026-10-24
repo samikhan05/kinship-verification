@@ -1,0 +1,66 @@
+# Default configuration. Every value can be overridden from the command line:
+#   python scripts/prepare.py --set seed=7 --set splits.val=0.2
+# Path shortcuts:  --data_root ...  --work_dir ...  --output_dir ...
+
+paths:
+  # Kaggle defaults. Locally, override with --data_root / --work_dir / --output_dir.
+  # Private Kaggle dataset with FIDs.zip (Option A). The Kaggle notebook finds the
+  # exact folder automatically. Option B: /kaggle/input/recognizing-faces-in-the-wild
+  data_root: /kaggle/input/fiw-fids
+  work_dir: /kaggle/working/work        # caches: aligned faces, embeddings, splits, checkpoints
+  output_dir: /kaggle/working/outputs   # reports, plots, contact sheets
+
+seed: 42
+
+data:
+  format: auto                # auto | fiw (Option A) | kaggle (Option B)
+  min_images_per_person: 1    # persons with fewer images are ignored
+  inspect_sample_images: 500  # how many images inspect_data.py opens to measure sizes
+  # Option A: use the official RFIW Track-II FMS/FMD lists instead of the relationship
+  # matrix. Off by default: on full FIW the matrix gives 2,029 triplets (807 families)
+  # and contains all 350 official ones (159 families), with the same ground-truth labels.
+  use_official_triplets: false
+
+splits:                       # family-disjoint, fractions of families
+  train: 0.70
+  val: 0.15
+  test: 0.15
+
+mining:                       # Option B pseudo-triplet mining
+  min_age_gap: 15             # both parents must look >= this many years older than the child
+  # Extra filter (not in the original spec, can be turned off): drop a candidate
+  # parent X if some other relative Q of the child is related to X and sits a full
+  # generation between them (Q >= child+gap and X >= Q+gap). That pattern means X
+  # is most likely a grandparent, not a parent.
+  exclude_grandparents: true
+
+negatives:
+  age_neighbors: 10           # sample the negative from the k candidates closest in age
+  adult_min_age: 18           # who counts as an "adult" for hard negatives (estimated age)
+  hard_splits: [val, test]    # splits that also get a hard-negative (wrong parent) set
+
+align:                        # shared face detection + alignment (src/kinship/align.py)
+  model_pack: buffalo_l       # InsightFace pack: SCRFD detector + ArcFace R100 + gender/age
+  # Detector input size. Padded FIW crops are ~200 px, so 320 is plenty: on 100 real
+  # FIW images it found 100/100 faces, like 640, and ran ~25% faster on CPU.
+  det_size: 320
+  # Lower than InsightFace's default 0.5: every image is known to contain a face,
+  # so a weak detection is still almost always the right one.
+  det_thresh: 0.3
+  # FIW images are tight face crops, which detectors often miss. Add a black border
+  # of ratio * longest side and try again; the first ratio that finds a face wins.
+  # Measured on 200 real FIW images: no padding found 12/200 faces, padding 0.3 found 200/200.
+  pad_ratios: [0.3, 0.0, 0.8]
+  crop_size: 112              # ArcFace input size
+  save_crops: true            # also save aligned crops as jpg in work_dir/aligned/
+
+embed:
+  chunk_size: 2000            # images per resumable chunk
+
+eval:
+  far: 0.1                    # report TAR at this FAR
+  e1_c_grid: [0.01, 0.1, 1.0, 10.0]   # E1 regularisation values tried (picked on val AUC)
+
+viz:
+  contact_sheet_rows: 30      # triplets in outputs/triplet_check.jpg
+  tile: 112                   # pixel size of each face tile in contact sheets

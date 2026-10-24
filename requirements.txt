@@ -1,0 +1,41 @@
+# Pinned versions (checked on PyPI, 2026-10-25).
+#
+# torch / torchvision are NOT listed: on Kaggle we keep the preinstalled CUDA build
+# (reinstalling torch wastes quota and can break CUDA). Locally the CPU build is fine.
+#
+# Known conflicts and fixes (the Kaggle notebook does all of this for you):
+#  * insightface 2.1 declares the CPU-only `onnxruntime`, which clashes with
+#    `onnxruntime-gpu` (same module name). On Kaggle: install it with --no-deps.
+#  * onnxruntime-gpu >= 1.23 targets CUDA 13; Kaggle has CUDA 12 -> use 1.22.0.
+#  * facenet-pytorch 2.6.0 declares torch<2.3 and numpy<2 and would DOWNGRADE
+#    Kaggle's torch. Install it with --no-deps (it only needs torch, torchvision,
+#    numpy, pillow, requests, which are already there).
+#  * onnx >= 1.18 needs protobuf >= 6, which can clash with other preinstalled
+#    packages; onnx 1.17.0 works with older protobuf.
+#
+# Kaggle install (GPU):
+#   pip uninstall -y onnxruntime
+#   pip install onnxruntime-gpu==1.22.0 onnx==1.17.0
+#   pip install insightface==2.1 --no-deps
+#   pip install facenet-pytorch==2.6.0 --no-deps
+#
+# Local install (CPU, any OS) - use a virtual environment:
+#   python -m venv .venv
+#   .venv/Scripts/python -m pip install -r requirements.txt    (Windows; bin/python on Linux)
+
+numpy>=1.26,<3
+pandas>=2.0
+PyYAML>=6.0
+Pillow>=10.0
+opencv-python-headless>=4.9
+scikit-learn>=1.4
+matplotlib>=3.8
+tqdm>=4.66
+pytest>=8.0
+
+insightface==2.1
+onnxruntime>=1.20          # CPU; on Kaggle replaced by onnxruntime-gpu==1.22.0 (see above)
+
+# Later milestones (installed on Kaggle by the notebook):
+# facenet-pytorch==2.6.0   (--no-deps, M3/M4)
+# gradio                   (M5 demo; version pinned then)
