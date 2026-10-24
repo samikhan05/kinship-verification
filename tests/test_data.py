@@ -30,3 +30,14 @@ def test_fiw_matrix_parsing(fiw_synth):
         assert (f, c) in ds.parent_child and (m, c) in ds.parent_child
         assert (c, f) not in ds.parent_child
         assert tuple(sorted((f, m))) in ds.spouses
+
+
+def test_find_data_root_without_full_walk(fiw_synth, kaggle_synth):
+    from kinship.data import find_data_root, scan_tree
+
+    families, csvs = scan_tree(str(fiw_synth["root"]))
+    assert len(families) == 40 and all((f / "mid.csv").exists() for f in families)
+    # The base folder holds several attached datasets, like /kaggle/input.
+    base = fiw_synth["root"].parent
+    assert find_data_root(base) == families[0].parent
+    assert find_data_root(kaggle_synth["root"]) == kaggle_synth["root"]

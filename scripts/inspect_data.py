@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from kinship.data import find_files, load_dataset  # noqa: E402
+from kinship.data import load_dataset, scan_tree  # noqa: E402
 from kinship.utils import add_common_args, config_from_args, get_paths  # noqa: E402
 
 
@@ -93,7 +93,7 @@ def main() -> None:
     if ds.format == "fiw":
         # Show one family's matrix so the "row i is <code> of column j" convention
         # can be checked by eye against the member names.
-        first_csv = find_files(ds.root, "mid.csv")[0]
+        first_csv = scan_tree(str(ds.root))[0][0] / "mid.csv"
         lines += ["", f"## Example relationship matrix ({first_csv.parent.name})", "",
                   "Cell (row i, column j) is read as *member i is <code> of member j*: "
                   "1 child, 2 sibling, 3 grandchild, 4 parent, 5 spouse, 6 grandparent. "

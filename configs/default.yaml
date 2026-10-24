@@ -4,9 +4,10 @@
 
 paths:
   # Kaggle defaults. Locally, override with --data_root / --work_dir / --output_dir.
-  # Private Kaggle dataset with FIDs.zip (Option A). The Kaggle notebook finds the
-  # exact folder automatically. Option B: /kaggle/input/recognizing-faces-in-the-wild
-  data_root: /kaggle/input/fiw-fids
+  # "auto" = search /kaggle/input for an attached dataset: full FIW (Option A, e.g.
+  # the private dataset fiw-fids) is preferred, else the Kaggle competition
+  # "Recognizing Faces in the Wild" (Option B). Locally, pass --data_root data/fiw.
+  data_root: auto
   work_dir: /kaggle/working/work        # caches: aligned faces, embeddings, splits, checkpoints
   output_dir: /kaggle/working/outputs   # reports, plots, contact sheets
 

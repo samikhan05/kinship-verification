@@ -17,8 +17,10 @@ Person ids are always "F0001/MID1" (family id / member id).
 """
 from __future__ import annotations
 
+import os
 import re
 from collections import defaultdict
+from functools import lru_cache
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -93,15 +95,65 @@ class KinshipDataset:
 
 
 # ---------------------------------------------------------------------- detection
+@lru_cache(maxsize=None)
+def scan_tree(root: str, max_depth: int = 6) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """Find FIW family folders (folders containing mid.csv) and loose CSV files.
+
+    Walks the tree but never descends INTO a family folder, so the ~26k image files
+    are not listed. Kaggle's /kaggle/input disk is slow at listing many files, and a
+    plain recursive glob over the whole dataset took minutes there.
+    Returns (family_dirs, csv_files), both sorted. Skips macOS junk.
+    """
+    families, csvs = [], []
+    stack = [(Path(root), 0)]
+    while stack:
+        folder, depth = stack.pop()
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            continue
+        if any(e.name == "mid.csv" for e in entries):
+            families.append(folder)
+            continue
+        for e in entries:
+            if e.name == "__MACOSX" or e.name.startswith("._"):
+                continue
+            if e.is_dir() and depth < max_depth:
+                stack.append((Path(e.path), depth + 1))
+            elif e.name.lower().endswith(".csv"):
+                csvs.append(Path(e.path))
+    return tuple(sorted(families)), tuple(sorted(csvs))
+
+
+def find_data_root(base: str | Path = "/kaggle/input") -> Path:
+    """Locate an attached dataset automatically (used when data_root is 'auto').
+
+    Prefers full FIW (returns the folder that holds the F#### family folders),
+    otherwise the Kaggle competition layout (train/ + train_relationships.csv).
+    """
+    base = Path(base)
+    families, csvs = scan_tree(str(base), max_depth=6)
+    if families:
+        return families[0].parent
+    for csv in csvs:
+        if csv.name == "train_relationships.csv" and (csv.parent / "train").is_dir():
+            return csv.parent
+    raise FileNotFoundError(f"No FIW or RFIW dataset found under {base}. Attach it with Add Input.")
+
+
+def resolve_data_root(value: str | Path) -> Path:
+    return find_data_root() if str(value) == "auto" else Path(value)
+
+
 def detect_format(root: str | Path) -> str:
     """Return 'fiw' or 'kaggle'. Option A (FIW) is preferred if both are present."""
     root = Path(root)
     if not root.exists():
         raise FileNotFoundError(f"data_root does not exist: {root}")
-    if find_files(root, "mid.csv"):
-        return "fiw"
     if (root / "train_relationships.csv").exists() and (root / "train").is_dir():
-        return "kaggle"
+        return "kaggle"     # checked first: it is cheap and avoids walking 20k image folders
+    if scan_tree(str(root))[0]:
+        return "fiw"
     raise FileNotFoundError(
         f"No known dataset format under {root}. Expected either FIW family folders "
         f"with mid.csv files, or train/ + train_relationships.csv (Kaggle RFIW).")
@@ -109,7 +161,7 @@ def detect_format(root: str | Path) -> str:
 
 def load_dataset(cfg: dict) -> KinshipDataset:
     """Load the dataset named by cfg['paths']['data_root'] (format auto-detected)."""
-    root = Path(cfg["paths"]["data_root"])
+    root = resolve_data_root(cfg["paths"]["data_root"])
     fmt = cfg["data"].get("format", "auto")
     if fmt == "auto":
         fmt = detect_format(root)
@@ -125,11 +177,6 @@ def is_junk(path: Path) -> bool:
     """macOS zip tools add '__MACOSX/' folders and '._name' files (metadata, not
     real data). FIW's zips contain them, e.g. a fake '._fms_pairs.csv'."""
     return "__MACOSX" in path.parts or path.name.startswith("._")
-
-
-def find_files(root: Path, pattern: str) -> list[Path]:
-    """Recursive glob that skips macOS junk files."""
-    return sorted(p for p in Path(root).rglob(pattern) if not is_junk(p))
 
 
 def _list_images(folder: Path, root: Path) -> list[str]:
@@ -200,8 +247,8 @@ def load_fiw(root: str | Path, min_images: int = 1, use_official: bool = True) -
     code_counts: dict[str, int] = defaultdict(int)
     inconsistent = 0
 
-    for mid_csv in find_files(root, "mid.csv"):
-        fam_dir = mid_csv.parent
+    for fam_dir in scan_tree(str(root))[0]:
+        mid_csv = fam_dir / "mid.csv"
         fid = fam_dir.name
         mids, rel, gender = parse_mid_csv(mid_csv)
         for m in mids:
@@ -248,7 +295,7 @@ def find_official_triplets(root: Path, persons: dict[str, Person]) -> list[tuple
     Rows with a label column equal to 0 are skipped (we build our own negatives).
     Returns None if no list was found or nothing could be parsed.
     """
-    candidates = [p for p in find_files(root, "*.csv")
+    candidates = [p for p in scan_tree(str(root))[1]
                   if re.search(r"fms|fmd|tri", p.stem, re.IGNORECASE)]
     triplets: set[tuple[str, str, str]] = set()
     for path in candidates:
