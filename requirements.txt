@@ -6,18 +6,15 @@
 # Known conflicts and fixes (the Kaggle notebook does all of this for you):
 #  * insightface 2.1 declares the CPU-only `onnxruntime`, which clashes with
 #    `onnxruntime-gpu` (same module name). On Kaggle: install it with --no-deps.
-#  * onnxruntime-gpu >= 1.23 targets CUDA 13; Kaggle has CUDA 12 -> use 1.22.0.
+#  * onnxruntime-gpu: 1.24.1 is built for CUDA 12 (Kaggle) and has wheels for
+#    Python 3.11-3.14. Recent releases (e.g. 1.31) target CUDA 13.
+#  * onnx: 1.21.0 has wheels for Python 3.10-3.14 and needs only protobuf >= 4.25.
+#    (1.17 has no wheel for Python 3.13+ and fails to build on Kaggle.)
 #  * facenet-pytorch 2.6.0 declares torch<2.3 and numpy<2 and would DOWNGRADE
 #    Kaggle's torch. Install it with --no-deps (it only needs torch, torchvision,
 #    numpy, pillow, requests, which are already there).
-#  * onnx >= 1.18 needs protobuf >= 6, which can clash with other preinstalled
-#    packages; onnx 1.17.0 works with older protobuf.
 #
-# Kaggle install (GPU):
-#   pip uninstall -y onnxruntime
-#   pip install onnxruntime-gpu==1.22.0 onnx==1.17.0
-#   pip install insightface==2.1 --no-deps
-#   pip install facenet-pytorch==2.6.0 --no-deps
+# Kaggle install (GPU): see scripts/kaggle_install.sh (the notebook runs it).
 #
 # Local install (CPU, any OS) - use a virtual environment:
 #   python -m venv .venv

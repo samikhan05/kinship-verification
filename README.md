@@ -67,9 +67,10 @@ Kaggle secret. The code contains no FIW images, so a public repo is fine.
 `outputs/`, `.venv/`), upload it as a private Kaggle dataset (e.g. `kinship-code`),
 attach it, and set `CODE_DATASET = "kinship-code"` in the notebook instead of `REPO_URL`.
 
-**Package fixes on Kaggle** (all done in the notebook, explained in `requirements.txt`):
-`onnxruntime-gpu==1.22.0` (CUDA 12), `insightface==2.1 --no-deps` (avoids the
-CPU-only onnxruntime), `facenet-pytorch==2.6.0 --no-deps` (avoids a torch downgrade).
+**Package fixes on Kaggle** (all in `scripts/kaggle_install.sh`, which the notebook runs):
+`onnxruntime-gpu==1.24.1` (CUDA 12), `onnx==1.21.0` (has wheels for new Pythons),
+`insightface==2.1 --no-deps` (avoids the CPU-only onnxruntime), `facenet-pytorch==2.6.0 --no-deps`
+(avoids a torch downgrade).
 
 Every stage is cached in `work_dir` and skipped when it is already done. Embedding
 extraction saves every 2,000 images, so a stopped session resumes where it left off.
