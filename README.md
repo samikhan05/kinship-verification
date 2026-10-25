@@ -4,8 +4,8 @@ Given face images of a claimed **father**, **mother** and **child**, predict the
 probability that the child is their biological child, and show **which parent the
 child resembles more** (via a learned attention gate).
 
-> Status: **M1, M2 done** (baselines run on Kaggle); **M3 code ready** (E2 attention head, E2b on
-> FaceNet), not run on Kaggle yet. The full README comes in M5.
+> Status: **M1-M3 done and run on Kaggle** (baselines E0/E1, attention head E2 / E2-hardneg / E2b).
+> Results: `outputs/results.md` of the latest Kaggle run. The full README comes in M5.
 
 ## Pipeline (order of scripts)
 
@@ -41,7 +41,10 @@ score well by recognising the photo. All experiments are therefore also scored w
 the **different-photo protocol**: a parent and the child are compared only through
 images from different photos. That is the headline number in `results.md`.
 Measured effect (Kaggle run 2026-10-25, test set, frozen ArcFace E0-mean): accuracy
-0.862 / ROC-AUC 0.926 with all photos vs 0.809 / 0.901 with different photos only.
+0.862 / ROC-AUC 0.926 with all photos vs 0.797 / 0.878 with different photos only.
+The child's images come from photos that neither parent's images come from. An
+earlier, looser rule (photos only disjoint pair by pair) still let some same-photo
+similarity through: E1-LR scored 0.844 under it and 0.793 under the strict rule.
 Classical and learned models are trained on different-photo data for the same reason.
 
 ## Local setup and tests (CPU)
