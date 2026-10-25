@@ -196,10 +196,51 @@ class EmbeddingStore:
                 return (own, other) if swapped else (other, own)
         return None
 
+    def triplet_rows(self, f: str, m: str, c: str) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+        """Images of father, mother and child such that the child's images come from
+        photos that neither parent's chosen images come from.
+
+        One child image set is used against BOTH parents (and against their average
+        in E2), so no comparison ever involves two faces from the same photo.
+        First choice: the child's photos without either parent (parents keep all
+        their images). Otherwise: a single child photo, with each parent represented
+        by images from their other photos. None if impossible.
+        """
+        rf, rm, rc = self.rows[f], self.rows[m], self.rows[c]
+        parent_photos = set(self.photo[rf]) | set(self.photo[rm])
+        own = rc[[ph not in parent_photos for ph in self.photo[rc]]]
+        if len(own):
+            return rf, rm, own
+        best = None
+        for ph in sorted(set(self.photo[rc])):
+            fr, mr = rf[self.photo[rf] != ph], rm[self.photo[rm] != ph]
+            cr = rc[self.photo[rc] == ph]
+            if len(fr) and len(mr) and (best is None or len(fr) + len(mr) > len(best[0]) + len(best[1])):
+                best = (fr, mr, cr)
+        return best
+
     def _embed(self, rows: np.ndarray, mode: str, rng) -> np.ndarray:
         if mode == "template":
             return l2_normalise(self.emb[rows].mean(axis=0))
         return self.emb[rng.choice(rows)]
+
+    def triplet(self, f_list, m_list, c_list, mode: str, rng: np.random.Generator | None = None,
+                cross_photo: bool = False):
+        """Embeddings (eF, eM, eC, ok) for triplets; see `triplet_rows` for cross_photo."""
+        f_list, m_list, c_list = list(f_list), list(m_list), list(c_list)
+        if not cross_photo:
+            eF, eM, eC = (self.stack(x, mode, rng) for x in (f_list, m_list, c_list))
+            return eF, eM, eC, np.ones(len(f_list), bool)
+        n, dim = len(f_list), self.emb.shape[1]
+        out = [np.zeros((n, dim), np.float32) for _ in range(3)]
+        ok = np.zeros(n, bool)
+        for i, (f, m, c) in enumerate(zip(f_list, m_list, c_list)):
+            rows = self.triplet_rows(f, m, c)
+            if rows is not None:
+                for k in range(3):
+                    out[k][i] = self._embed(rows[k], mode, rng)
+                ok[i] = True
+        return out[0], out[1], out[2], ok
 
     def pair(self, a_list, b_list, mode: str, rng: np.random.Generator | None = None,
              cross_photo: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

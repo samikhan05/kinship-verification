@@ -4,8 +4,8 @@ Given face images of a claimed **father**, **mother** and **child**, predict the
 probability that the child is their biological child, and show **which parent the
 child resembles more** (via a learned attention gate).
 
-> Status: **M1 done**; **M2 code ready** (alignment, embeddings, E0/E1, report, Kaggle notebook).
-> Results: *not run yet* (waiting for the first Kaggle GPU run). The full README comes in M5.
+> Status: **M1, M2 done** (baselines run on Kaggle); **M3 code ready** (E2 attention head, E2b on
+> FaceNet), not run on Kaggle yet. The full README comes in M5.
 
 ## Pipeline (order of scripts)
 
@@ -15,7 +15,8 @@ child resembles more** (via a learned attention gate).
 | 1 | `scripts/extract_embeddings.py` *(M2)* | detect + align faces, ArcFace embeddings, gender/age estimates (cached) |
 | 2 | `scripts/prepare.py` | family-disjoint splits, triplets, negatives, pairs, `triplet_check.jpg` |
 | 3 | `scripts/evaluate.py` *(M2)* | E0 / E1 baselines and all later experiments |
-| 4 | `scripts/train_head.py`, `scripts/finetune_backbone.py` *(M3, M4)* | E2 / E2b / E3 |
+| 4 | `scripts/train_head.py` | E2 / E2-hardneg / E2b: attention-gated head on cached embeddings |
+| 4b | `scripts/finetune_backbone.py` *(M4)* | E3: fine-tune FaceNet end to end |
 | 5 | `scripts/make_report.py` *(M5)* | `outputs/results.md` + plots |
 
 `extract_embeddings` runs **before** `prepare` because, for the Kaggle dataset

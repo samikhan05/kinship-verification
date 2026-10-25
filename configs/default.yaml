@@ -65,3 +65,23 @@ eval:
 viz:
   contact_sheet_rows: 30      # triplets in outputs/triplet_check.jpg
   tile: 112                   # pixel size of each face tile in contact sheets
+
+facenet:                      # FaceNet path (E2b, E3): facenet_pytorch MTCNN + InceptionResnetV1
+  image_size: 160             # InceptionResnetV1 input size
+  margin: 14                  # extra pixels around the MTCNN box (facenet_pytorch default)
+  pretrained: vggface2        # weights trained on VGGFace2
+
+train:
+  head:                       # E2 / E2b: attention-gated tri-subject head on cached embeddings
+    epochs: 20
+    patience: 5               # early stopping: epochs without a val ROC-AUC improvement
+    batch_size: 64
+    lr: 1.0e-3
+    weight_decay: 1.0e-4
+    aux_weight: 0.3           # weight of the auxiliary F-C and M-C pairwise losses
+    # Share of training negatives that swap one parent ("hard") instead of the child.
+    # 0 = main negatives only (E2). The E2-hardneg run uses 0.5.
+    hard_negative_fraction: 0.0
+    hidden: 256               # comparator hidden size
+    pair_dim: 128             # size of h_F / h_M
+    dropout: 0.3

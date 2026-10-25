@@ -93,8 +93,8 @@ def test_e0_finds_planted_signal(eval_setup, tmp_path):
 def test_e1_and_pairwise_run(eval_setup, tmp_path):
     out, store, sets = eval_setup
     tr, va = out["triplets"]["train"], out["triplets"]["val"]
-    X_tr = handcrafted_features(*triplet_embeddings(store, tr, "template")[:4])
-    X_va = handcrafted_features(*triplet_embeddings(store, va, "template")[:4])
+    X_tr = handcrafted_features(*triplet_embeddings(store, tr, "template")[:3])
+    X_va = handcrafted_features(*triplet_embeddings(store, va, "template")[:3])
     assert X_tr.shape == (len(tr), 8)
     scorer = ClassicalScorer("lr", [0.1, 1.0]).fit(X_tr, tr["label"], X_va, va["label"])
     assert scorer.chosen_c in (0.1, 1.0)
@@ -136,3 +136,15 @@ def test_xphoto_protocol_drops_matched_pairs(eval_setup, tmp_path):
         m = res["modes"][proto]["test"]
         assert m["n"] == 2 * m["n_pos"]               # still exactly 50 / 50
         assert m["n"] + m["dropped_rows"] == len(sets["test"])
+
+
+def test_triplet_rows_child_photos_free_of_both_parents():
+    store = _toy_store({"F": ["P1", "P2", "P4"], "M": ["P1", "P3"], "C": ["P1", "P2", "P5"],
+                        "F2": ["P1"], "M2": ["P1", "P6"], "C2": ["P1"]})
+    f, m, c = store.triplet_rows("F", "M", "C")
+    assert set(store.photo[c]) == {"P5"}                  # the only child photo without a parent
+    # C2 is only in photo P1, so P1 must be dropped from both parents; F2 has nothing else.
+    assert store.triplet_rows("F2", "M2", "C2") is None
+    f, m, c = store.triplet_rows("F", "M2", "C2")
+    assert set(store.photo[c]) == {"P1"}
+    assert "P1" not in set(store.photo[f]) | set(store.photo[m])

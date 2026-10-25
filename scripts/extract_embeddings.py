@@ -29,7 +29,7 @@ from kinship.utils import (add_common_args, config_from_args, get_logger, get_pa
 def main() -> None:
     ap = add_common_args(argparse.ArgumentParser(description=__doc__,
                                                  formatter_class=argparse.RawDescriptionHelpFormatter))
-    ap.add_argument("--aligner", choices=["arcface", "smoketest"], default="arcface")
+    ap.add_argument("--aligner", choices=["arcface", "facenet", "smoketest"], default="arcface")
     ap.add_argument("--limit", type=int, help="only the first N images (quick test)")
     args = ap.parse_args()
     cfg = config_from_args(args)

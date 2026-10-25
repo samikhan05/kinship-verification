@@ -17,31 +17,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import pandas as pd  # noqa: E402
-
 from kinship.embed import EmbeddingStore, load_embeddings  # noqa: E402
-from kinship.evaluate import (HEADLINE, ClassicalScorer, CosineScorer,  # noqa: E402
+from kinship.evaluate import (HEADLINE, ClassicalScorer, CosineScorer, load_split_tables,  # noqa: E402
                               evaluate_pairwise_cosine, evaluate_triplet_scorer, handcrafted_features,
                               keep_complete_pairs, triplet_embeddings)
 from kinship.utils import add_common_args, config_from_args, get_logger, get_paths, seed_everything  # noqa: E402
-
-
-def load_split_tables(split_dir: Path, store: EmbeddingStore, log) -> dict[str, pd.DataFrame]:
-    """Read the prepared CSVs, dropping rows with a person that has no embedding."""
-    names = ["triplets_train", "triplets_val", "triplets_test", "hard_val", "hard_test",
-             "pairs_val", "pairs_test"]
-    tables = {}
-    for name in names:
-        path = split_dir / f"{name}.csv"
-        if not path.exists():
-            continue
-        df = pd.read_csv(path)
-        cols = [c for c in ("F", "M", "C", "p1", "p2") if c in df]
-        keep = df[cols].apply(lambda col: col.map(lambda p: p in store)).all(axis=1)
-        if (~keep).any():
-            log.warning(f"{name}: dropping {(~keep).sum()} rows with persons that have no embedding")
-        tables[name] = df[keep].reset_index(drop=True)
-    return tables
 
 
 def main() -> None:
@@ -63,7 +43,7 @@ def main() -> None:
     if "hard_test" in t:
         sets["test_hard"] = t["hard_test"]
     tag = "" if args.embeddings == "arcface" else f" ({args.embeddings})"
-    backbone = "ArcFace" if args.embeddings == "arcface" else args.embeddings
+    backbone = {"arcface": "ArcFace", "facenet": "FaceNet"}.get(args.embeddings, args.embeddings)
 
     def show(res):
         a, x = res["modes"]["template"]["test"], res["modes"][HEADLINE]["test"]

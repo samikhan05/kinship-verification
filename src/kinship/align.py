@@ -13,7 +13,7 @@ often missed. We therefore pad the image with a border before detection and try 
 few padding amounts (`align.pad_ratios`). If no face is found at all we fall back
 to a centre crop and count it (`detected=False`).
 
-The FaceNet path (MTCNN, 160 px) for fine-tuning is added in M3/M4.
+The FaceNet path (MTCNN, 160 px) used for E2b and fine-tuning (E3) is `FaceNetAligner`.
 """
 from __future__ import annotations
 
@@ -151,9 +151,67 @@ class SmokeTestAligner:
         return FaceResult(crop, l2_normalise(thumb @ self.proj), True, 1.0, None, None, 1, 0.0)
 
 
+class FaceNetAligner:
+    """FaceNet path (E2b, E3): facenet_pytorch MTCNN crop + InceptionResnetV1 (VGGFace2).
+
+    MTCNN returns a 160x160 crop around the face (with `margin` pixels of
+    context), the input FaceNet was trained on. Unlike ArcFace it does not warp the
+    face onto fixed landmark positions; it crops the detected box. The same
+    padding trick and centre-crop fallback as the ArcFace path are used.
+    Unlike the ONNX ArcFace model, this one is a PyTorch network, so it can be
+    fine-tuned (E3).
+    """
+
+    name = "facenet"
+
+    def __init__(self, cfg: dict, log=None):
+        import torch
+        from facenet_pytorch import MTCNN, InceptionResnetV1
+
+        f = cfg["facenet"]
+        self.log = log or get_logger()
+        self.torch = torch
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.crop_size = int(f["image_size"])
+        # post_process=False: keep 0-255 pixel values so the crop can be saved as an image;
+        # we normalise for the network ourselves in `embed_crops`.
+        self.mtcnn = MTCNN(image_size=self.crop_size, margin=int(f["margin"]), post_process=False,
+                           select_largest=True, device=self.device)
+        self.model = InceptionResnetV1(pretrained=f["pretrained"]).eval().to(self.device)
+        self.pad_ratios = [float(r) for r in cfg["align"]["pad_ratios"]]
+        self.log.info(f"FaceNet (InceptionResnetV1/{f['pretrained']}) + MTCNN on {self.device}")
+
+    @staticmethod
+    def to_input(crops_uint8):
+        """(N, H, W, 3) uint8 RGB -> normalised float tensor (N, 3, H, W), as facenet_pytorch expects."""
+        import torch
+
+        x = torch.as_tensor(np.asarray(crops_uint8)).permute(0, 3, 1, 2).float()
+        return (x - 127.5) / 128.0
+
+    def embed_crops(self, crops_uint8) -> np.ndarray:
+        with self.torch.no_grad():
+            e = self.model(self.to_input(crops_uint8).to(self.device)).cpu().numpy()
+        return l2_normalise(e.astype(np.float32))
+
+    def process(self, img_rgb: np.ndarray) -> FaceResult:
+        from PIL import Image
+
+        for ratio in self.pad_ratios:
+            face, prob = self.mtcnn(Image.fromarray(pad_image(img_rgb, ratio)), return_prob=True)
+            if face is not None:
+                crop = face.permute(1, 2, 0).clamp(0, 255).round().byte().cpu().numpy()
+                return FaceResult(crop, self.embed_crops(crop[None])[0], True, float(prob),
+                                  None, None, 1, ratio)
+        crop = center_square(img_rgb, self.crop_size)
+        return FaceResult(crop, self.embed_crops(crop[None])[0], False, 0.0, None, None, 0, None)
+
+
 def make_aligner(cfg: dict, kind: str = "arcface", log=None):
     if kind == "arcface":
         return ArcFaceAligner(cfg, log)
+    if kind == "facenet":
+        return FaceNetAligner(cfg, log)
     if kind == "smoketest":
         return SmokeTestAligner(cfg, log)
     raise ValueError(f"Unknown aligner: {kind}")

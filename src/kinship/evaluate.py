@@ -7,8 +7,8 @@ Protocol (the same for E0 ... E4, so the rows of results.md are comparable):
   * Four scoring protocols:
       template         mean embedding over all images of each person
       image            one randomly chosen image per person (fixed seed)
-      template_xphoto  like template, but a parent and the child are compared
-      image_xphoto     only through images from DIFFERENT photos
+      template_xphoto  like template, but the child's images come from photos
+      image_xphoto     that neither parent's images come from
     Why "xphoto": in FIW, relatives are often cut from the same photo (94% of kin
     test triplets share a photo between child and a parent; non-kin never do).
     Same-photo faces share lighting/camera/colour, which a model can exploit
@@ -18,9 +18,10 @@ Protocol (the same for E0 ... E4, so the rows of results.md are comparable):
   * Breakdowns: FMS vs FMD, main test set vs hard-negative set.
   * Every score is saved to outputs/scores/ so plots can be re-made later.
 
-An experiment is any object with `score(eF, eM, eCf, eCm) -> scores` (higher =
-more likely kin), where eCf / eCm are the child embeddings used against the
-father / mother (identical unless xphoto picks different child images).
+An experiment is any object with `score(eF, eM, eC) -> scores` (higher = more
+likely kin). A scorer may also define `score_details(eF, eM, eC) -> (scores,
+{column: values})`; the extra columns (e.g. E2's attention weights) are saved
+next to the scores.
 """
 from __future__ import annotations
 
@@ -105,6 +106,26 @@ def keep_complete_pairs(df: pd.DataFrame, ok: np.ndarray) -> np.ndarray:
     return ok & ~np.isin(ids, ids[~ok])
 
 
+def load_split_tables(split_dir: str | Path, store: EmbeddingStore, log=None) -> dict[str, pd.DataFrame]:
+    """Read the prepared split CSVs. Rows with a person that has no embedding are
+    dropped together with their matched partner row (keeps sets 50/50)."""
+    names = ["triplets_train", "triplets_val", "triplets_test", "hard_val", "hard_test",
+             "pairs_val", "pairs_test"]
+    tables = {}
+    for name in names:
+        path = Path(split_dir) / f"{name}.csv"
+        if not path.exists():
+            continue
+        df = pd.read_csv(path)
+        cols = [c for c in ("F", "M", "C", "p1", "p2") if c in df]
+        ok = df[cols].apply(lambda col: col.map(lambda p: p in store)).all(axis=1).to_numpy()
+        keep = keep_complete_pairs(df, ok)
+        if (~keep).any() and log is not None:
+            log.warning(f"{name}: dropping {(~keep).sum()} rows (person without embedding, or its partner)")
+        tables[name] = df[keep].reset_index(drop=True)
+    return tables
+
+
 def rowwise_cos(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Cosine similarity per row (inputs are already L2-normalised)."""
     return np.sum(a * b, axis=1)
@@ -112,27 +133,19 @@ def rowwise_cos(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 def triplet_embeddings(store: EmbeddingStore, df: pd.DataFrame, mode: str, rng=None,
                        cross_photo: bool = False):
-    """(eF, eM, eCf, eCm, ok) for each row of a triplet table.
-
-    eCf / eCm: the child's embedding used against the father / the mother. Without
-    cross_photo it is one and the same vector; with it, each parent-child comparison
-    uses its own images from photos the other person is not in.
-    """
-    if not cross_photo:
-        eF, eM, eC = (store.stack(df[col].tolist(), mode, rng) for col in ("F", "M", "C"))
-        return eF, eM, eC, eC, np.ones(len(df), bool)
-    eF, eCf, ok_f = store.pair(df["F"], df["C"], mode, rng, cross_photo=True)
-    eM, eCm, ok_m = store.pair(df["M"], df["C"], mode, rng, cross_photo=True)
-    return eF, eM, eCf, eCm, ok_f & ok_m
+    """(eF, eM, eC, ok) for each row of a triplet table. With cross_photo, the
+    child's images come from photos that neither parent's images come from
+    (`EmbeddingStore.triplet_rows`); rows where that is impossible have ok=False."""
+    return store.triplet(df["F"], df["M"], df["C"], mode, rng, cross_photo)
 
 
-def handcrafted_features(eF, eM, eCf, eCm) -> np.ndarray:
+def handcrafted_features(eF, eM, eC) -> np.ndarray:
     """E1 features: [cos_FC, cos_MC, mean|eF-eC|, mean|eM-eC|, and mean / std / max /
     min of the element-wise product |eF-eC| * |eM-eC|]. The product is large in the
     dimensions where the child differs from BOTH parents."""
-    dF, dM = np.abs(eF - eCf), np.abs(eM - eCm)
+    dF, dM = np.abs(eF - eC), np.abs(eM - eC)
     prod = dF * dM
-    return np.column_stack([rowwise_cos(eF, eCf), rowwise_cos(eM, eCm), dF.mean(1), dM.mean(1),
+    return np.column_stack([rowwise_cos(eF, eC), rowwise_cos(eM, eC), dF.mean(1), dM.mean(1),
                             prod.mean(1), prod.std(1), prod.max(1), prod.min(1)])
 
 
@@ -143,8 +156,8 @@ class CosineScorer:
     def __init__(self, how: str = "mean"):
         self.how = how
 
-    def score(self, eF, eM, eCf, eCm) -> np.ndarray:
-        both = np.column_stack([rowwise_cos(eF, eCf), rowwise_cos(eM, eCm)])
+    def score(self, eF, eM, eC) -> np.ndarray:
+        both = np.column_stack([rowwise_cos(eF, eC), rowwise_cos(eM, eC)])
         return both.mean(1) if self.how == "mean" else both.max(1)
 
 
@@ -179,8 +192,8 @@ class ClassicalScorer:
                 best, self.model, self.chosen_c = auc, m, c
         return self
 
-    def score(self, eF, eM, eCf, eCm) -> np.ndarray:
-        return self.model.decision_function(handcrafted_features(eF, eM, eCf, eCm))
+    def score(self, eF, eM, eC) -> np.ndarray:
+        return self.model.decision_function(handcrafted_features(eF, eM, eC))
 
 
 # ---------------------------------------------------------------------- running
@@ -204,8 +217,12 @@ def evaluate_triplet_scorer(name: str, description: str, scorer, store: Embeddin
             *emb, ok = triplet_embeddings(store, df, mode, rng, xphoto)
             keep = keep_complete_pairs(df, ok)
             kept[set_name] = df[keep].reset_index(drop=True)
-            scored[set_name] = scorer.score(*(e[keep] for e in emb))
-            kept[set_name].assign(score=scored[set_name], protocol=proto).to_csv(
+            emb = [e[keep] for e in emb]
+            if hasattr(scorer, "score_details"):
+                scored[set_name], details = scorer.score_details(*emb)
+            else:
+                scored[set_name], details = scorer.score(*emb), {}
+            kept[set_name].assign(score=scored[set_name], protocol=proto, **details).to_csv(
                 score_dir / f"{name}__{set_name}__{proto}.csv", index=False)
         thr = choose_threshold(kept["val"]["label"].to_numpy(), scored["val"])
         res = {}
