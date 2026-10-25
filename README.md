@@ -38,9 +38,9 @@ child and at least one parent; non-kin triplets never do. Faces from one photo l
 alike for reasons unrelated to kinship (lighting, camera, colour), so a model can
 score well by recognising the photo. All experiments are therefore also scored with
 the **different-photo protocol**: a parent and the child are compared only through
-images from different photos. That is the headline number in `results.md`. The
-first run (2026-10-24, frozen ArcFace E0-mean) gave 0.862 accuracy with all photos.
-The different-photo number has not been run yet.
+images from different photos. That is the headline number in `results.md`.
+Measured effect (Kaggle run 2026-10-25, test set, frozen ArcFace E0-mean): accuracy
+0.862 / ROC-AUC 0.926 with all photos vs 0.809 / 0.901 with different photos only.
 Classical and learned models are trained on different-photo data for the same reason.
 
 ## Local setup and tests (CPU)
