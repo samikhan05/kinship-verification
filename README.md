@@ -5,7 +5,7 @@ probability that the child is their biological child, and show **which parent th
 child resembles more** (via a learned attention gate).
 
 > Status: **M1-M3 done and run on Kaggle** (baselines E0/E1, attention head E2 / E2-hardneg / E2b).
-> Results: `outputs/results.md` of the latest Kaggle run. The full README comes in M5.
+> **M4 code ready** (E3 fine-tuning, E2-pairs), not run on Kaggle yet. The full README comes in M5.
 
 ## Pipeline (order of scripts)
 
@@ -16,7 +16,7 @@ child resembles more** (via a learned attention gate).
 | 2 | `scripts/prepare.py` | family-disjoint splits, triplets, negatives, pairs, `triplet_check.jpg` |
 | 3 | `scripts/evaluate.py` *(M2)* | E0 / E1 baselines and all later experiments |
 | 4 | `scripts/train_head.py` | E2 / E2-hardneg / E2b: attention-gated head on cached embeddings |
-| 4b | `scripts/finetune_backbone.py` *(M4)* | E3: fine-tune FaceNet end to end |
+| 4b | `scripts/finetune_backbone.py` | E3: fine-tune FaceNet's last block + head end to end |
 | 5 | `scripts/make_report.py` *(M5)* | `outputs/results.md` + plots |
 
 `extract_embeddings` runs **before** `prepare` because, for the Kaggle dataset

@@ -228,3 +228,14 @@ def restore_cached_work(work_dir: str | Path, source: str | Path | None = "auto"
         elif src.is_file() and not dst.exists():
             shutil.copy2(src, dst)
     return source
+
+
+def find_in_inputs(*parts: str, base: str | Path = "/kaggle/input", max_depth: int = 4) -> list[Path]:
+    """Folders/files <base>/<1..max_depth levels>/<parts...> - e.g. the aligned crops
+    inside an attached earlier run: find_in_inputs("work", "aligned", "facenet")."""
+    import glob
+
+    hits = []
+    for depth in range(1, max_depth + 1):
+        hits += glob.glob(str(Path(base, *["*"] * depth, *parts)))
+    return sorted(Path(h) for h in hits)

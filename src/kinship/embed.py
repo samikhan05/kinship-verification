@@ -258,3 +258,50 @@ class EmbeddingStore:
             if rows is not None:
                 ea[i], eb[i], ok[i] = self._embed(rows[0], mode, rng), self._embed(rows[1], mode, rng), True
         return ea, eb, ok
+
+
+def build_crop_cache(index: pd.DataFrame, out_path: str | Path, size: int, crop_dirs: list,
+                     fallback=None, log=None) -> np.ndarray:
+    """All face crops in ONE uint8 array (row i = row i of index.csv), memory-mapped.
+
+    Fine-tuning reads thousands of random crops per epoch; one array on disk is far
+    faster than opening 26k small JPEG files each time. The crops come from the
+    JPEGs saved by extract_embeddings (searched in `crop_dirs`, which may include an
+    attached earlier Kaggle run). `fallback(rel_path) -> crop` is used for images
+    whose crop is missing (e.g. re-run the aligner); without it they stay black.
+    Built once, then reused.
+    """
+    from tqdm.auto import tqdm
+
+    log = log or get_logger()
+    out_path = Path(out_path)
+    if out_path.exists():
+        arr = np.load(out_path, mmap_mode="r")
+        if arr.shape == (len(index), size, size, 3):
+            return arr
+    tmp = out_path.with_name(out_path.name + ".tmp")
+    arr = np.lib.format.open_memmap(tmp, mode="w+", dtype=np.uint8, shape=(len(index), size, size, 3))
+    found = recomputed = 0
+    for i, rel in enumerate(tqdm(index["image"], desc="crop cache", mininterval=10)):
+        crop = None
+        for d in crop_dirs:
+            path = (Path(d) / rel).with_suffix(".jpg")
+            if path.exists():
+                crop, found = load_image_rgb(path), found + 1
+                break
+        if crop is None and fallback is not None:
+            crop, recomputed = fallback(rel), recomputed + 1
+        if crop is not None:
+            arr[i] = crop if crop.shape[:2] == (size, size) else _resize(crop, size)
+    arr.flush()
+    del arr
+    os.replace(tmp, out_path)
+    log.info(f"Crop cache {out_path.name}: {found} from saved crops, {recomputed} recomputed, "
+             f"{len(index) - found - recomputed} missing (left black)")
+    return np.load(out_path, mmap_mode="r")
+
+
+def _resize(img: np.ndarray, size: int) -> np.ndarray:
+    from .utils import center_square
+
+    return center_square(img, size)

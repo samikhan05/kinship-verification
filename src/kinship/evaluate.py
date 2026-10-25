@@ -110,7 +110,7 @@ def load_split_tables(split_dir: str | Path, store: EmbeddingStore, log=None) ->
     """Read the prepared split CSVs. Rows with a person that has no embedding are
     dropped together with their matched partner row (keeps sets 50/50)."""
     names = ["triplets_train", "triplets_val", "triplets_test", "hard_val", "hard_test",
-             "pairs_val", "pairs_test"]
+             "pairs_train", "pairs_val", "pairs_test"]
     tables = {}
     for name in names:
         path = Path(split_dir) / f"{name}.csv"

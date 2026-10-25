@@ -29,38 +29,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import torch  # noqa: E402
-from scipy.stats import spearmanr  # noqa: E402
 
 from kinship.embed import EmbeddingStore, load_embeddings  # noqa: E402
-from kinship.evaluate import (HEADLINE, evaluate_triplet_scorer,  # noqa: E402
-                              load_split_tables, rowwise_cos, triplet_embeddings)
-from kinship.train import HeadScorer, load_head, train_head  # noqa: E402
+from kinship.evaluate import HEADLINE, evaluate_triplet_scorer, load_split_tables  # noqa: E402
+from kinship.train import HeadScorer, alpha_analysis, load_head, train_head  # noqa: E402
 from kinship.utils import add_common_args, config_from_args, get_logger, get_paths, seed_everything  # noqa: E402
-
-
-def alpha_analysis(store: EmbeddingStore, test: pd.DataFrame, scorer: HeadScorer) -> dict:
-    """How the attention weights behave on KIN test triplets (headline protocol)."""
-    pos = test[test["label"] == 1].reset_index(drop=True)
-    *emb, ok = triplet_embeddings(store, pos, "template", cross_photo=True)
-    eF, eM, eC = (e[ok] for e in emb)
-    pos = pos[ok].reset_index(drop=True)
-    _, d = scorer.score_details(eF, eM, eC)
-    cos_gap = rowwise_cos(eF, eC) - rowwise_cos(eM, eC)          # > 0: child closer to father
-    rho, pval = spearmanr(d["alpha_F"], cos_gap)
-    agree = float(np.mean((d["alpha_F"] > 0.5) == (cos_gap > 0)))
-    out = {"n_kin_triplets": int(len(pos)),
-           "spearman_alphaF_vs_cos_gap": float(rho), "spearman_p_value": float(pval),
-           "share_where_alpha_picks_more_similar_parent": agree,
-           "mean_alpha_F": float(d["alpha_F"].mean()),
-           "share_alpha_F_above_half": float((d["alpha_F"] > 0.5).mean())}
-    for kind in ("FMS", "FMD"):
-        m = (pos["kind"] == kind).to_numpy()
-        if m.any():
-            out[f"mean_alpha_F_{kind}"] = float(d["alpha_F"][m].mean())
-    return out
 
 
 def main() -> None:
@@ -93,7 +68,8 @@ def main() -> None:
         log.info(f"--- {name} config {i + 1}/{len(combos)}: {dict(zip(keys, combo))}")
         _, summ = train_head(store, t["triplets_train"], t["triplets_val"], persons, hp_i, seed, log,
                              output_dir / "logs" / f"{name}__cfg{i}_train.csv",
-                             work_dir / "checkpoints" / f"{name}__cfg{i}.pt", t.get("hard_val"))
+                             work_dir / "checkpoints" / f"{name}__cfg{i}.pt", t.get("hard_val"),
+                             pairs_train=t.get("pairs_train"), pairs_val=t.get("pairs_val"))
         runs.append({"config": i, **dict(zip(keys, combo)), "best_val_auc": summ["best_val_auc"],
                      "best_epoch": summ["best_epoch"], "epochs_run": summ["epochs_run"]})
     sweep = pd.DataFrame(runs)
@@ -120,7 +96,8 @@ def main() -> None:
     backbone = {"arcface": "ArcFace", "facenet": "FaceNet"}.get(args.embeddings, args.embeddings)
     hn = float(hp["hard_negative_fraction"])
     desc = (f"attention-gated tri-subject head on frozen {backbone}"
-            + (f", {hn:.0%} hard negatives in training" if hn > 0 else ""))
+            + (f", {hn:.0%} hard negatives in training" if hn > 0 else "")
+            + (", comparator pretrained on pairs" if int(hp.get("pretrain_pair_epochs", 0)) > 0 else ""))
     alpha = alpha_analysis(store, t["triplets_test"], scorer)
     res = evaluate_triplet_scorer(name, desc, scorer, store, sets, output_dir, seed,
                                   float(cfg["eval"]["far"]),

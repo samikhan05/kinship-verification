@@ -95,3 +95,47 @@ def tri_subject_loss(out: dict[str, torch.Tensor], y: torch.Tensor, y_fc: torch.
     (F', M, C) the mother-child pair is still a true pair (y_mc = 1)."""
     bce = F.binary_cross_entropy_with_logits
     return bce(out["logit"], y) + aux_weight * (bce(out["logit_fc"], y_fc) + bce(out["logit_mc"], y_mc))
+
+
+# --------------------------------------------------------------------------- E3: fine-tuning
+def facenet_backbone(pretrained: str | None = "vggface2", unfreeze=("block8", "last_linear", "last_bn")):
+    """InceptionResnetV1 (facenet_pytorch) with only the listed top-level blocks trainable.
+
+    Why only the last block(s): with ~1,400 training families, updating all ~23M
+    weights would quickly overfit and could destroy the general face features
+    learned from VGGFace2. The early layers (edges, textures, face parts) stay as
+    they are; only the final, most task-specific layers adapt to kinship.
+    """
+    from facenet_pytorch import InceptionResnetV1
+
+    net = InceptionResnetV1(pretrained=pretrained)
+    for name, p in net.named_parameters():
+        p.requires_grad = any(name == u or name.startswith(u + ".") for u in unfreeze)
+    return net
+
+
+class FineTuneModel(nn.Module):
+    """E3: FaceNet backbone (last blocks unfrozen) + the E2 tri-subject head, trained end to end."""
+
+    def __init__(self, backbone: nn.Module, head: TriSubjectHead, unfreeze=("block8", "last_linear", "last_bn")):
+        super().__init__()
+        self.backbone, self.head, self.unfreeze = backbone, head, list(unfreeze)
+
+    def train(self, mode: bool = True) -> "FineTuneModel":
+        super().train(mode)
+        if mode:
+            # Frozen layers stay in eval mode: their BatchNorm statistics must not
+            # drift with our small batches, and the backbone's dropout stays off.
+            for name, module in self.backbone.named_children():
+                if name not in self.unfreeze:
+                    module.eval()
+        return self
+
+    def embed(self, x: torch.Tensor) -> torch.Tensor:
+        """Face crops (normalised, N x 3 x 160 x 160) -> L2-normalised 512-d embeddings."""
+        return F.normalize(self.backbone(x).float(), dim=-1)
+
+    def forward(self, xF: torch.Tensor, xM: torch.Tensor, xC: torch.Tensor) -> dict[str, torch.Tensor]:
+        n = xF.shape[0]
+        e = self.embed(torch.cat([xF, xM, xC]))       # one backbone pass for all three people
+        return self.head(e[:n], e[n:2 * n], e[2 * n:])

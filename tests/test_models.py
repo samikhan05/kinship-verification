@@ -63,3 +63,36 @@ def test_training_learns_planted_signal(kaggle_synth, tmp_path):
     s, details = HeadScorer(reloaded).score_details(*e)
     assert s.shape == (4,) and set(details) == {"alpha_F", "alpha_M", "p_FC", "p_MC"}
     assert np.allclose(details["alpha_F"] + details["alpha_M"], 1, atol=1e-5)
+
+
+def test_finetune_e3_runs_and_only_trains_last_blocks(kaggle_synth, tmp_path):
+    """One tiny E3 epoch on CPU with a randomly initialised FaceNet (no download)."""
+    pytest.importorskip("facenet_pytorch")
+    from kinship.align import SmokeTestAligner
+    from kinship.embed import EmbeddingStore, build_crop_cache, extract_embeddings
+    from kinship.models import TriSubjectHead, facenet_backbone
+    from kinship.train import finetune_e3
+    from kinship.triplets import build_all_splits
+    from kinship.utils import get_logger
+
+    ds, cfg = kaggle_synth["ds"], kaggle_synth["cfg"]
+    emb, index = extract_embeddings(ds, SmokeTestAligner(cfg), tmp_path / "emb", chunk_size=1000,
+                                    crops_dir=tmp_path / "crops")
+    store = EmbeddingStore(emb, index)
+    crops = build_crop_cache(index, tmp_path / "crops.npy", 160, [tmp_path / "crops"])
+    assert crops.shape == (len(index), 160, 160, 3)
+
+    backbone = facenet_backbone(None)
+    trainable = {n.split(".")[0] for n, p in backbone.named_parameters() if p.requires_grad}
+    assert trainable == {"block8", "last_linear", "last_bn"}
+
+    out = build_all_splits(ds, cfg)
+    persons = pd.DataFrame([{"pid": p.pid, "fid": p.fid, "gender": p.gender} for p in ds.persons.values()])
+    train = out["triplets"]["train"]
+    train = train[train["pair_id"] < 6]                        # 6 kin triplets + their negatives
+    ft = {**cfg["finetune"], "epochs": 1, "batch_triplets": 4}
+    model, summary = finetune_e3(store, index, crops, TriSubjectHead(), train, out["triplets"]["val"], persons,
+                                 ft, 0, get_logger("test"), tmp_path / "ft.csv", tmp_path / "ft.pt",
+                                 pretrained=None, device="cpu")
+    assert summary["epochs_run"] == 1 and (tmp_path / "ft.pt").exists() and (tmp_path / "ft.csv").exists()
+    assert 2_000_000 < summary["trainable_backbone_params"] < 3_000_000

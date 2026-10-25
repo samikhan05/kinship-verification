@@ -43,7 +43,8 @@ def main() -> None:
     if "hard_test" in t:
         sets["test_hard"] = t["hard_test"]
     tag = "" if args.embeddings == "arcface" else f" ({args.embeddings})"
-    backbone = {"arcface": "ArcFace", "facenet": "FaceNet"}.get(args.embeddings, args.embeddings)
+    backbone = {"arcface": "ArcFace", "facenet": "FaceNet",
+                "facenet_ft": "fine-tuned FaceNet"}.get(args.embeddings, args.embeddings)
 
     def show(res):
         a, x = res["modes"]["template"]["test"], res["modes"][HEADLINE]["test"]
