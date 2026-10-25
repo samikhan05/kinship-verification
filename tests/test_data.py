@@ -56,3 +56,9 @@ def test_restore_cached_work(tmp_path):
     assert (new / "embeddings" / "arcface" / "embeddings.npy").exists()
     assert (new / "attributes.csv").exists() and not (new / "aligned").exists()
     assert restore_cached_work(new, "auto", base=tmp_path / "nothing") is None
+    # Two attached runs: the one with more embedding types wins.
+    newer = tmp_path / "input" / "a-run" / "work" / "embeddings"
+    for kind in ("arcface", "facenet"):
+        (newer / kind).mkdir(parents=True)
+        (newer / kind / "embeddings.npy").write_bytes(b"x")
+    assert restore_cached_work(tmp_path / "w2", "auto", base=tmp_path / "input") == newer.parent

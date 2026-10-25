@@ -9,6 +9,7 @@ Data flow for one (father, mother, child) triplet of face embeddings:
               attention gate:  alpha = softmax(W [h_F ; h_M])  ->  (alpha_F, alpha_M)
               fusion:          z = alpha_F * h_F + alpha_M * h_M
               add:             cos((eF + eM) / 2, eC)          "mixed parents" similarity
+                               cos(eF, eC), cos(eM, eC)        skip connections (see below)
                                         v
               classifier MLP  -->  triplet logit  -->  P(child of this couple)
 
@@ -18,6 +19,14 @@ Data flow for one (father, mother, child) triplet of face embeddings:
   interpretable "father 62% / mother 38%" output.
 * The auxiliary pairwise losses force h_F and h_M to carry real parent-child
   evidence on their own, which makes the attention weights meaningful.
+
+Changes after the first Kaggle run (2026-10-25). Without them the head overfit:
+best validation AUC at epoch 1, then worse while training loss kept falling.
+  * A shared linear projection (512 -> proj_dim) before the comparison features
+    cuts the first layer from ~400k to ~65k weights.
+  * The raw cosine similarities go straight to the classifier ("skip
+    connections"): the model starts from what the strong E0 baseline knows and
+    only has to learn what to add on top.
 """
 from __future__ import annotations
 
@@ -39,35 +48,41 @@ def pair_features(p: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
 class PairComparator(nn.Module):
     """Shared parent-child comparator: embeddings of a parent and a child -> h (vector)."""
 
-    def __init__(self, emb_dim: int = 512, hidden: int = 256, out_dim: int = 128, dropout: float = 0.3):
+    def __init__(self, emb_dim: int = 512, proj_dim: int = 128, hidden: int = 128,
+                 out_dim: int = 64, dropout: float = 0.3):
         super().__init__()
+        self.proj = nn.Linear(emb_dim, proj_dim)  # shared: parent and child go through the same layer
         self.net = nn.Sequential(
-            nn.Linear(3 * emb_dim + 1, hidden), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(3 * proj_dim + 1, hidden), nn.ReLU(), nn.Dropout(dropout),
             nn.Linear(hidden, out_dim), nn.ReLU())
-        self.pair_logit = nn.Linear(out_dim, 1)   # "is this parent related to this child?"
+        self.pair_logit = nn.Linear(out_dim + 1, 1)   # "is this parent related to this child?"
 
-    def forward(self, p: torch.Tensor, c: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        h = self.net(pair_features(p, c))
-        return h, self.pair_logit(h).squeeze(-1)
+    def forward(self, p: torch.Tensor, c: torch.Tensor):
+        """Returns (h, pairwise logit, raw cosine similarity)."""
+        cos_raw = F.cosine_similarity(p, c, dim=-1).unsqueeze(-1)
+        pp, cc = F.normalize(self.proj(p), dim=-1), F.normalize(self.proj(c), dim=-1)
+        h = self.net(pair_features(pp, cc))
+        return h, self.pair_logit(torch.cat([h, cos_raw], dim=-1)).squeeze(-1), cos_raw
 
 
 class TriSubjectHead(nn.Module):
     """Attention-gated tri-subject kinship head (main model, E2)."""
 
-    def __init__(self, emb_dim: int = 512, hidden: int = 256, pair_dim: int = 128, dropout: float = 0.3):
+    def __init__(self, emb_dim: int = 512, proj_dim: int = 128, hidden: int = 128,
+                 pair_dim: int = 64, dropout: float = 0.3):
         super().__init__()
-        self.comparator = PairComparator(emb_dim, hidden, pair_dim, dropout)
+        self.comparator = PairComparator(emb_dim, proj_dim, hidden, pair_dim, dropout)
         self.gate = nn.Linear(2 * pair_dim, 2)    # sees both parents, outputs one score per parent
         self.classifier = nn.Sequential(
-            nn.Linear(pair_dim + 1, 64), nn.ReLU(), nn.Dropout(dropout), nn.Linear(64, 1))
+            nn.Linear(pair_dim + 3, 32), nn.ReLU(), nn.Dropout(dropout), nn.Linear(32, 1))
 
     def forward(self, eF: torch.Tensor, eM: torch.Tensor, eC: torch.Tensor) -> dict[str, torch.Tensor]:
-        h_f, logit_fc = self.comparator(eF, eC)
-        h_m, logit_mc = self.comparator(eM, eC)
+        h_f, logit_fc, cos_fc = self.comparator(eF, eC)
+        h_m, logit_mc, cos_mc = self.comparator(eM, eC)
         alpha = torch.softmax(self.gate(torch.cat([h_f, h_m], dim=-1)), dim=-1)   # (B, 2)
         z = alpha[:, :1] * h_f + alpha[:, 1:] * h_m
         mixed = F.cosine_similarity((eF + eM) / 2, eC, dim=-1).unsqueeze(-1)
-        logit = self.classifier(torch.cat([z, mixed], dim=-1)).squeeze(-1)
+        logit = self.classifier(torch.cat([z, mixed, cos_fc, cos_mc], dim=-1)).squeeze(-1)
         return {"logit": logit, "logit_fc": logit_fc, "logit_mc": logit_mc,
                 "alpha_f": alpha[:, 0], "alpha_m": alpha[:, 1]}
 

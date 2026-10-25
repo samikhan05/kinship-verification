@@ -186,7 +186,7 @@ class FaceNetAligner:
         """(N, H, W, 3) uint8 RGB -> normalised float tensor (N, 3, H, W), as facenet_pytorch expects."""
         import torch
 
-        x = torch.as_tensor(np.asarray(crops_uint8)).permute(0, 3, 1, 2).float()
+        x = torch.from_numpy(np.array(crops_uint8, dtype=np.uint8)).permute(0, 3, 1, 2).float()
         return (x - 127.5) / 128.0
 
     def embed_crops(self, crops_uint8) -> np.ndarray:

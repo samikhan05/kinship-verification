@@ -215,7 +215,11 @@ def restore_cached_work(work_dir: str | Path, source: str | Path | None = "auto"
             hits += glob.glob(str(Path(base, *["*"] * depth, "embeddings", "*", "embeddings.npy")))
         if not hits:
             return None
-        source = Path(sorted(hits)[0]).parents[2]
+        # Several earlier runs may be attached: prefer the one with the most embedding
+        # types (e.g. arcface AND facenet), then the most recent.
+        works = {Path(h).parents[2] for h in hits}
+        source = max(sorted(works), key=lambda w: (sum(Path(h).parents[2] == w for h in hits),
+                                                     (w / "embeddings").stat().st_mtime))
     source, work_dir = Path(source), ensure_dir(work_dir)
     for item in ["embeddings", "attributes.csv"]:
         src, dst = source / item, work_dir / item

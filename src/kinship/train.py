@@ -141,8 +141,9 @@ def train_head(store: EmbeddingStore, train_df: pd.DataFrame, val_df: pd.DataFra
     (vF, vM, vC), v_y = _val_arrays(store, val_df)
     hard = _val_arrays(store, val_hard_df) if val_hard_df is not None else None
 
-    model_args = {"emb_dim": int(store.emb.shape[1]), "hidden": int(hp["hidden"]),
-                  "pair_dim": int(hp["pair_dim"]), "dropout": float(hp["dropout"])}
+    model_args = {"emb_dim": int(store.emb.shape[1]), "proj_dim": int(hp["proj_dim"]),
+                  "hidden": int(hp["hidden"]), "pair_dim": int(hp["pair_dim"]),
+                  "dropout": float(hp["dropout"])}
     model = TriSubjectHead(**model_args).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=float(hp["lr"]), weight_decay=float(hp["weight_decay"]))
     epochs, bs = int(hp["epochs"]), int(hp["batch_size"])

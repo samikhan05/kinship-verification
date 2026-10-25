@@ -73,7 +73,7 @@ facenet:                      # FaceNet path (E2b, E3): facenet_pytorch MTCNN + 
 
 train:
   head:                       # E2 / E2b: attention-gated tri-subject head on cached embeddings
-    epochs: 20
+    epochs: 30
     patience: 5               # early stopping: epochs without a val ROC-AUC improvement
     batch_size: 64
     lr: 1.0e-3
@@ -82,6 +82,14 @@ train:
     # Share of training negatives that swap one parent ("hard") instead of the child.
     # 0 = main negatives only (E2). The E2-hardneg run uses 0.5.
     hard_negative_fraction: 0.0
-    hidden: 256               # comparator hidden size
-    pair_dim: 128             # size of h_F / h_M
+    proj_dim: 128             # shared projection of each 512-d embedding (fewer weights)
+    hidden: 128               # comparator hidden size
+    pair_dim: 64              # size of h_F / h_M
     dropout: 0.3
+    # Small hyper-parameter sweep: every combination is trained, the one with the best
+    # VALIDATION ROC-AUC is kept (the test set is never looked at). 2 x 2 x 2 = 8 runs,
+    # seconds each on cached embeddings. Set to {} to train only the values above.
+    sweep:
+      lr: [1.0e-3, 3.0e-4]
+      dropout: [0.3, 0.5]
+      weight_decay: [1.0e-2, 1.0e-1]
