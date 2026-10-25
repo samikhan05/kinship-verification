@@ -191,3 +191,36 @@ def make_contact_sheet(rows: Sequence[Sequence[str | Path | np.ndarray]],
     ensure_dir(out_path.parent)
     sheet.save(out_path, quality=90)
     return out_path
+
+
+# --------------------------------------------------------------------------- caches
+def restore_cached_work(work_dir: str | Path, source: str | Path | None = "auto",
+                        base: str | Path = "/kaggle/input") -> Path | None:
+    """Reuse an earlier run's cached embeddings (Kaggle: attach that notebook's output).
+
+    source="auto" looks for <base>/.../work/embeddings/*/embeddings.npy a few
+    levels deep. Only the small caches are copied (embeddings + attributes.csv,
+    ~100 MB), not the 26k aligned crops, which are slow to copy and not needed
+    for evaluation. Files that already exist in work_dir are left alone.
+    Returns the source work folder, or None if nothing was found / requested.
+    """
+    import glob
+    import shutil
+
+    if source is None:
+        return None
+    if str(source) == "auto":
+        hits = []
+        for depth in range(1, 5):
+            hits += glob.glob(str(Path(base, *["*"] * depth, "embeddings", "*", "embeddings.npy")))
+        if not hits:
+            return None
+        source = Path(sorted(hits)[0]).parents[2]
+    source, work_dir = Path(source), ensure_dir(work_dir)
+    for item in ["embeddings", "attributes.csv"]:
+        src, dst = source / item, work_dir / item
+        if src.is_dir() and not dst.exists():
+            shutil.copytree(src, dst)
+        elif src.is_file() and not dst.exists():
+            shutil.copy2(src, dst)
+    return source

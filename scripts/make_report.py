@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from kinship.utils import add_common_args, config_from_args, get_paths, load_json  # noqa: E402
 
 TAR = "tar@far=0.1"
+HEAD = "template_xphoto"   # headline protocol (see src/kinship/evaluate.py)
 
 
 def fmt(x) -> str:
@@ -62,21 +63,30 @@ def main() -> None:
     if not trip:
         lines += ["No experiments have been run yet."]
     else:
-        lines += ["## Tri-subject verification: main test set (per-person template scoring)", "",
-                  "Threshold chosen on validation only. Test sets are 50% kin / 50% non-kin.", ""]
+        n_test = trip[0]["modes"].get(HEAD, {}).get("test", {})
+        lines += ["## Tri-subject verification: main test set", "",
+                  "**Headline protocol: per-person templates, parent and child compared only through images "
+                  "from different photos.** In FIW, relatives are often cut from the same photo, and same-photo "
+                  "faces look alike for non-kinship reasons (lighting, camera, colour). The *all photos* "
+                  "columns show the score when that shortcut is allowed.", "",
+                  f"Threshold chosen on validation only. Test set: {n_test.get('n', '?')} triplets, 50% kin / 50% "
+                  f"non-kin; {n_test.get('dropped_rows', 0)} rows were dropped because a parent and the child "
+                  "never appear in different photos.", ""]
         rows = []
         for r in trip:
-            m = r["modes"]["template"]["test"]
+            m, a = r["modes"].get(HEAD, r["modes"]["template"])["test"], r["modes"]["template"]["test"]
             rows.append([r["experiment"], r["description"], fmt(m["accuracy"]), fmt(m["roc_auc"]),
-                         fmt(m["f1"]), fmt(m.get(TAR))])
-        lines += table(["Exp", "Description", "Accuracy", "ROC-AUC", "F1", "TAR@FAR=0.1"], rows) + [""]
+                         fmt(m["f1"]), fmt(m.get(TAR)), fmt(a["accuracy"]), fmt(a["roc_auc"])])
+        lines += table(["Exp", "Description", "Accuracy", "ROC-AUC", "F1", "TAR@FAR=0.1",
+                        "Acc (all photos)", "AUC (all photos)"], rows) + [""]
 
-        lines += ["## Breakdowns (test)", "",
+        lines += ["## Breakdowns (test, different-photo protocol)", "",
                   "*Per-image*: one random photo per person instead of the average over all photos. "
                   "*Hard*: negatives with one wrong parent (the child is real). ", ""]
         rows = []
         for r in trip:
-            tm, im = r["modes"]["template"], r["modes"]["image"]
+            tm = r["modes"].get(HEAD, r["modes"]["template"])
+            im = r["modes"].get("image_xphoto", r["modes"]["image"])
             hard = tm.get("test_hard", {})
             rows.append([r["experiment"], fmt(im["test"]["accuracy"]), fmt(im["test"]["roc_auc"]),
                          fmt(hard.get("accuracy")), fmt(hard.get("roc_auc")),
@@ -86,12 +96,14 @@ def main() -> None:
                         "Acc FMS", "Acc FMD", "Val acc", "Val AUC"], rows) + [""]
 
     for r in pair:
-        tm = r["modes"]["template"]
-        lines += [f"## Pairwise parent-child verification: {r['experiment']}", "", r["description"], ""]
+        tm = r["modes"].get(HEAD, r["modes"]["template"])
+        am = r["modes"]["template"]
+        lines += [f"## Pairwise parent-child verification: {r['experiment']}", "",
+                  f"{r['description']}. Templates; different-photo protocol unless marked *all photos*.", ""]
         rels = ["test"] + sorted(k for k in tm if k.startswith("test_"))
         rows = [[k.replace("test_", "") if k != "test" else "all", str(tm[k]["n"]), fmt(tm[k]["accuracy"]),
-                 fmt(tm[k]["roc_auc"])] for k in rels]
-        lines += table(["Relation", "n", "Accuracy", "ROC-AUC"], rows) + [""]
+                 fmt(tm[k]["roc_auc"]), fmt(am.get(k, {}).get("roc_auc"))] for k in rels]
+        lines += table(["Relation", "n", "Accuracy", "ROC-AUC", "AUC (all photos)"], rows) + [""]
 
     lines += ["## Reference", "",
               "Published RFIW tri-subject leaderboard accuracies are roughly 0.68-0.79. Our split and "

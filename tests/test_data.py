@@ -41,3 +41,18 @@ def test_find_data_root_without_full_walk(fiw_synth, kaggle_synth):
     base = fiw_synth["root"].parent
     assert find_data_root(base) == families[0].parent
     assert find_data_root(kaggle_synth["root"]) == kaggle_synth["root"]
+
+
+def test_restore_cached_work(tmp_path):
+    from kinship.utils import restore_cached_work
+
+    old = tmp_path / "input" / "my-notebook" / "work"
+    (old / "embeddings" / "arcface").mkdir(parents=True)
+    (old / "embeddings" / "arcface" / "embeddings.npy").write_bytes(b"x")
+    (old / "attributes.csv").write_text("pid,gender,age\n")
+    (old / "aligned" / "arcface").mkdir(parents=True)          # must NOT be copied
+    new = tmp_path / "working" / "work"
+    assert restore_cached_work(new, "auto", base=tmp_path / "input") == old
+    assert (new / "embeddings" / "arcface" / "embeddings.npy").exists()
+    assert (new / "attributes.csv").exists() and not (new / "aligned").exists()
+    assert restore_cached_work(new, "auto", base=tmp_path / "nothing") is None

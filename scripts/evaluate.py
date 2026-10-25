@@ -20,8 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import pandas as pd  # noqa: E402
 
 from kinship.embed import EmbeddingStore, load_embeddings  # noqa: E402
-from kinship.evaluate import (ClassicalScorer, CosineScorer, evaluate_pairwise_cosine,  # noqa: E402
-                              evaluate_triplet_scorer, handcrafted_features, triplet_embeddings)
+from kinship.evaluate import (HEADLINE, ClassicalScorer, CosineScorer,  # noqa: E402
+                              evaluate_pairwise_cosine, evaluate_triplet_scorer, handcrafted_features,
+                              keep_complete_pairs, triplet_embeddings)
 from kinship.utils import add_common_args, config_from_args, get_logger, get_paths, seed_everything  # noqa: E402
 
 
@@ -65,8 +66,9 @@ def main() -> None:
     backbone = "ArcFace" if args.embeddings == "arcface" else args.embeddings
 
     def show(res):
-        m = res["modes"]["template"]["test"]
-        log.info(f"{res['experiment']}: test (template) acc={m['accuracy']:.3f} auc={m['roc_auc']:.3f}")
+        a, x = res["modes"]["template"]["test"], res["modes"][HEADLINE]["test"]
+        log.info(f"{res['experiment']}: test acc / auc - all photos {a['accuracy']:.3f} / {a['roc_auc']:.3f}, "
+                 f"different photos {x['accuracy']:.3f} / {x['roc_auc']:.3f} (n={x['n']})")
 
     if "E0" in args.exp:
         for how in ("mean", "max"):
@@ -77,19 +79,20 @@ def main() -> None:
                                       {"val": t["pairs_val"], "test": t["pairs_test"]}, output_dir, seed, far))
 
     if "E1" in args.exp:
-        # Features from per-person templates. Scaler + C are fitted on train / chosen on val only.
+        # Features from per-person templates built from DIFFERENT photos, so the model
+        # cannot learn the same-photo shortcut. Scaler + C: fitted on train / chosen on val only.
         def feats(df):
-            return handcrafted_features(*triplet_embeddings(store, df, "template"))
-        tr, va = t["triplets_train"], t["triplets_val"]
-        X_tr, X_va = feats(tr), feats(va)
+            *emb, ok = triplet_embeddings(store, df, "template", cross_photo=True)
+            keep = keep_complete_pairs(df, ok)
+            return handcrafted_features(*(e[keep] for e in emb)), df["label"].to_numpy()[keep]
+        (X_tr, y_tr), (X_va, y_va) = feats(t["triplets_train"]), feats(t["triplets_val"])
         for kind, label in (("lr", "logistic regression"), ("svm", "linear SVM")):
-            scorer = ClassicalScorer(kind, cfg["eval"]["e1_c_grid"], seed).fit(
-                X_tr, tr["label"], X_va, va["label"])
+            scorer = ClassicalScorer(kind, cfg["eval"]["e1_c_grid"], seed).fit(X_tr, y_tr, X_va, y_va)
             show(evaluate_triplet_scorer(
                 f"E1-{kind.upper()}{tag}", f"{label} on 8 hand-made features (frozen {backbone})",
                 scorer, store, sets, output_dir, seed, far,
                 extra={"chosen_C": scorer.chosen_c, "val_auc_by_C": scorer.val_auc_by_c,
-                       "train_triplets": int(len(tr))}))
+                       "train_triplets": int(len(y_tr))}))
     log.info(f"Results in {output_dir / 'results'}. Next: python scripts/make_report.py")
 
 

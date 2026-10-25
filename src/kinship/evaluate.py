@@ -4,14 +4,23 @@ Protocol (the same for E0 ... E4, so the rows of results.md are comparable):
   * The decision threshold is chosen on the VALIDATION set only (max accuracy),
     then applied unchanged to the test sets.
   * Metrics: accuracy, ROC-AUC, F1, TAR at FAR = 0.1.
-  * Breakdowns: FMS vs FMD, main test set vs hard-negative set, and two scoring
-    modes - "template" (mean embedding over all images of a person) and "image"
-    (one randomly chosen image per person, fixed seed).
+  * Four scoring protocols:
+      template         mean embedding over all images of each person
+      image            one randomly chosen image per person (fixed seed)
+      template_xphoto  like template, but a parent and the child are compared
+      image_xphoto     only through images from DIFFERENT photos
+    Why "xphoto": in FIW, relatives are often cut from the same photo (94% of kin
+    test triplets share a photo between child and a parent; non-kin never do).
+    Same-photo faces share lighting/camera/colour, which a model can exploit
+    without learning kinship. The xphoto protocols remove that shortcut and are
+    the headline numbers. A kin triplet that cannot be scored this way is
+    dropped together with its matched non-kin triplet, so sets stay 50/50.
+  * Breakdowns: FMS vs FMD, main test set vs hard-negative set.
   * Every score is saved to outputs/scores/ so plots can be re-made later.
 
-An experiment is any object with `score(eF, eM, eC) -> scores` (higher = more
-likely kin) and optionally `fit(...)`. Scorers are defined here for E0 and E1;
-the learned heads (E2, E3) plug into the same functions later.
+An experiment is any object with `score(eF, eM, eCf, eCm) -> scores` (higher =
+more likely kin), where eCf / eCm are the child embeddings used against the
+father / mother (identical unless xphoto picks different child images).
 """
 from __future__ import annotations
 
@@ -24,7 +33,10 @@ from sklearn.metrics import f1_score, roc_auc_score, roc_curve
 from .embed import EmbeddingStore
 from .utils import ensure_dir, save_json
 
-MODES = ("template", "image")
+# protocol name -> (embedding mode, compare only images from different photos?)
+PROTOCOLS = {"template": ("template", False), "image": ("image", False),
+             "template_xphoto": ("template", True), "image_xphoto": ("image", True)}
+HEADLINE = "template_xphoto"
 
 
 # ---------------------------------------------------------------------- metrics
@@ -70,24 +82,57 @@ def compute_metrics(y, s, threshold: float, far: float = 0.1) -> dict:
             "threshold": float(threshold)}
 
 
-# ---------------------------------------------------------------------- features
+# ---------------------------------------------------------------------- data helpers
+def pair_ids(df: pd.DataFrame) -> np.ndarray | None:
+    """Which kin row each non-kin row was made from (they share a pair_id).
+
+    Older split files have no pair_id column; their triplet tables list the kin
+    rows first and the negatives in the same order, so position gives the pairing.
+    """
+    if "pair_id" in df:
+        return df["pair_id"].to_numpy()
+    n, lab = len(df) // 2, df["label"].to_numpy()
+    if len(df) % 2 == 0 and (lab[:n] == 1).all() and (lab[n:] == 0).all():
+        return np.concatenate([np.arange(n), np.arange(n)])
+    return None
+
+
+def keep_complete_pairs(df: pd.DataFrame, ok: np.ndarray) -> np.ndarray:
+    """Drop rows that could not be scored AND their matched partner (keeps 50/50)."""
+    ids = pair_ids(df)
+    if ids is None:
+        return ok
+    return ok & ~np.isin(ids, ids[~ok])
+
+
 def rowwise_cos(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Cosine similarity per row (inputs are already L2-normalised)."""
     return np.sum(a * b, axis=1)
 
 
-def triplet_embeddings(store: EmbeddingStore, df: pd.DataFrame, mode: str, rng=None):
-    """(eF, eM, eC) for each row of a triplet table."""
-    return tuple(store.stack(df[col].tolist(), mode, rng) for col in ("F", "M", "C"))
+def triplet_embeddings(store: EmbeddingStore, df: pd.DataFrame, mode: str, rng=None,
+                       cross_photo: bool = False):
+    """(eF, eM, eCf, eCm, ok) for each row of a triplet table.
+
+    eCf / eCm: the child's embedding used against the father / the mother. Without
+    cross_photo it is one and the same vector; with it, each parent-child comparison
+    uses its own images from photos the other person is not in.
+    """
+    if not cross_photo:
+        eF, eM, eC = (store.stack(df[col].tolist(), mode, rng) for col in ("F", "M", "C"))
+        return eF, eM, eC, eC, np.ones(len(df), bool)
+    eF, eCf, ok_f = store.pair(df["F"], df["C"], mode, rng, cross_photo=True)
+    eM, eCm, ok_m = store.pair(df["M"], df["C"], mode, rng, cross_photo=True)
+    return eF, eM, eCf, eCm, ok_f & ok_m
 
 
-def handcrafted_features(eF, eM, eC) -> np.ndarray:
+def handcrafted_features(eF, eM, eCf, eCm) -> np.ndarray:
     """E1 features: [cos_FC, cos_MC, mean|eF-eC|, mean|eM-eC|, and mean / std / max /
     min of the element-wise product |eF-eC| * |eM-eC|]. The product is large in the
     dimensions where the child differs from BOTH parents."""
-    dF, dM = np.abs(eF - eC), np.abs(eM - eC)
+    dF, dM = np.abs(eF - eCf), np.abs(eM - eCm)
     prod = dF * dM
-    return np.column_stack([rowwise_cos(eF, eC), rowwise_cos(eM, eC), dF.mean(1), dM.mean(1),
+    return np.column_stack([rowwise_cos(eF, eCf), rowwise_cos(eM, eCm), dF.mean(1), dM.mean(1),
                             prod.mean(1), prod.std(1), prod.max(1), prod.min(1)])
 
 
@@ -98,8 +143,8 @@ class CosineScorer:
     def __init__(self, how: str = "mean"):
         self.how = how
 
-    def score(self, eF, eM, eC) -> np.ndarray:
-        both = np.column_stack([rowwise_cos(eF, eC), rowwise_cos(eM, eC)])
+    def score(self, eF, eM, eCf, eCm) -> np.ndarray:
+        both = np.column_stack([rowwise_cos(eF, eCf), rowwise_cos(eM, eCm)])
         return both.mean(1) if self.how == "mean" else both.max(1)
 
 
@@ -134,66 +179,72 @@ class ClassicalScorer:
                 best, self.model, self.chosen_c = auc, m, c
         return self
 
-    def score(self, eF, eM, eC) -> np.ndarray:
-        return self.model.decision_function(handcrafted_features(eF, eM, eC))
+    def score(self, eF, eM, eCf, eCm) -> np.ndarray:
+        return self.model.decision_function(handcrafted_features(eF, eM, eCf, eCm))
 
 
 # ---------------------------------------------------------------------- running
 def evaluate_triplet_scorer(name: str, description: str, scorer, store: EmbeddingStore,
                             sets: dict[str, pd.DataFrame], out_dir: str | Path, seed: int,
                             far: float = 0.1, extra: dict | None = None) -> dict:
-    """Score val / test / test_hard in both modes, pick the threshold on val, save
-    results/<name>.json and scores/<name>__<set>__<mode>.csv.
+    """Score val / test / test_hard under every protocol, pick the threshold on val,
+    save results/<name>.json and scores/<name>__<set>__<protocol>.csv.
 
     `sets` must contain 'val' and 'test' (main sets) and may contain 'test_hard'.
     """
     out_dir = Path(out_dir)
     score_dir = ensure_dir(out_dir / "scores")
-    result = {"experiment": name, "description": description, "protocol":
-              "threshold = max accuracy on val (main set, same scoring mode); applied unchanged to test",
+    result = {"experiment": name, "description": description, "headline_protocol": HEADLINE,
+              "protocol": "threshold = max accuracy on val (main set, same protocol); applied unchanged to test",
               "modes": {}, **(extra or {})}
-    for m_i, mode in enumerate(MODES):
-        scored = {}
+    for p_i, (proto, (mode, xphoto)) in enumerate(PROTOCOLS.items()):
+        scored, kept = {}, {}
         for s_i, (set_name, df) in enumerate(sets.items()):
-            rng = np.random.default_rng([seed, m_i, s_i])     # fixed image choice per set
-            s = scorer.score(*triplet_embeddings(store, df, mode, rng))
-            scored[set_name] = s
-            df.assign(score=s, mode=mode).to_csv(score_dir / f"{name}__{set_name}__{mode}.csv", index=False)
-        thr = choose_threshold(sets["val"]["label"].to_numpy(), scored["val"])
+            rng = np.random.default_rng([seed, p_i, s_i])     # fixed image choice per set
+            *emb, ok = triplet_embeddings(store, df, mode, rng, xphoto)
+            keep = keep_complete_pairs(df, ok)
+            kept[set_name] = df[keep].reset_index(drop=True)
+            scored[set_name] = scorer.score(*(e[keep] for e in emb))
+            kept[set_name].assign(score=scored[set_name], protocol=proto).to_csv(
+                score_dir / f"{name}__{set_name}__{proto}.csv", index=False)
+        thr = choose_threshold(kept["val"]["label"].to_numpy(), scored["val"])
         res = {}
-        for set_name, df in sets.items():
+        for set_name, df in kept.items():
             res[set_name] = compute_metrics(df["label"], scored[set_name], thr, far)
-        test = sets["test"]
+            res[set_name]["dropped_rows"] = int(len(sets[set_name]) - len(df))
+        test = kept["test"]
         for kind in sorted(test["kind"].unique()):
             mask = (test["kind"] == kind).to_numpy()
             res[f"test_{kind}"] = compute_metrics(test["label"][mask], scored["test"][mask], thr, far)
-        result["modes"][mode] = res
+        result["modes"][proto] = res
     save_json(result, ensure_dir(out_dir / "results") / f"{name}.json")
     return result
 
 
-def evaluate_pairwise_cosine(name: str, backbone: str, store: EmbeddingStore, pairs: dict[str, pd.DataFrame],
-                             out_dir: str | Path, seed: int, far: float = 0.1) -> dict:
+def evaluate_pairwise_cosine(name: str, backbone: str, store: EmbeddingStore,
+                             pairs: dict[str, pd.DataFrame], out_dir: str | Path, seed: int,
+                             far: float = 0.1) -> dict:
     """Pairwise parent-child baseline: score = cos(p1, p2). Breakdown by relation
     (FS / FD / MS / MD when roles are known, 'related' otherwise)."""
     out_dir = Path(out_dir)
     result = {"experiment": name, "description": f"frozen {backbone}, cosine similarity of the pair",
-              "task": "pairwise", "modes": {}}
-    for m_i, mode in enumerate(MODES):
-        scored = {}
+              "task": "pairwise", "headline_protocol": HEADLINE, "modes": {}}
+    for p_i, (proto, (mode, xphoto)) in enumerate(PROTOCOLS.items()):
+        scored, kept = {}, {}
         for s_i, (set_name, df) in enumerate(pairs.items()):
-            rng = np.random.default_rng([seed, 10 + m_i, s_i])
-            a = store.stack(df["p1"].tolist(), mode, rng)
-            b = store.stack(df["p2"].tolist(), mode, rng)
-            scored[set_name] = rowwise_cos(a, b)
-            df.assign(score=scored[set_name], mode=mode).to_csv(
-                ensure_dir(out_dir / "scores") / f"{name}__{set_name}__{mode}.csv", index=False)
-        thr = choose_threshold(pairs["val"]["label"].to_numpy(), scored["val"])
-        res = {s: compute_metrics(df["label"], scored[s], thr, far) for s, df in pairs.items()}
-        test = pairs["test"]
+            rng = np.random.default_rng([seed, 10 + p_i, s_i])
+            a, b, ok = store.pair(df["p1"], df["p2"], mode, rng, xphoto)
+            keep = keep_complete_pairs(df, ok)
+            kept[set_name] = df[keep].reset_index(drop=True)
+            scored[set_name] = rowwise_cos(a[keep], b[keep])
+            kept[set_name].assign(score=scored[set_name], protocol=proto).to_csv(
+                ensure_dir(out_dir / "scores") / f"{name}__{set_name}__{proto}.csv", index=False)
+        thr = choose_threshold(kept["val"]["label"].to_numpy(), scored["val"])
+        res = {s: compute_metrics(df["label"], scored[s], thr, far) for s, df in kept.items()}
+        test = kept["test"]
         for rel in sorted(test["rel"].unique()):
             mask = (test["rel"] == rel).to_numpy()
             res[f"test_{rel}"] = compute_metrics(test["label"][mask], scored["test"][mask], thr, far)
-        result["modes"][mode] = res
+        result["modes"][proto] = res
     save_json(result, ensure_dir(out_dir / "results") / f"{name}.json")
     return result

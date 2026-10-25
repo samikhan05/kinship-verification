@@ -123,15 +123,31 @@ def person_attributes(index: pd.DataFrame) -> pd.DataFrame:
     return g[["pid", "gender", "age", "n_faces", "male_frac"]]
 
 
+def photo_id(image_path: str) -> str:
+    """'F0007/MID1/P00074_face3.jpg' -> 'P00074': the photo this face was cut from.
+
+    FIW and RFIW name face crops <photo>_face<k>.jpg. Relatives often appear in the
+    SAME photo, and faces from one photo share lighting, camera and colour - a
+    similarity that has nothing to do with kinship. Knowing the photo lets us
+    avoid comparing two faces from the same picture.
+    """
+    name = str(image_path).rsplit("/", 1)[-1]
+    return name.split("_face")[0] if "_face" in name else str(image_path)
+
+
 class EmbeddingStore:
     """Look up embeddings by person: one random image, or a template (mean of all).
 
     When a person has some images where a face was detected, only those are used;
     centre-crop fallbacks are used only for people with no detected face at all.
+
+    `pair(..., cross_photo=True)` compares two people using only images that come
+    from different photos (see `disjoint_rows`).
     """
 
     def __init__(self, emb: np.ndarray, index: pd.DataFrame):
         self.emb = l2_normalise(emb.astype(np.float32))
+        self.photo = index["image"].map(photo_id).to_numpy()
         self.rows: dict[str, np.ndarray] = {}
         for pid, g in index.groupby("pid"):
             ok = g[g["ok"]]
@@ -158,3 +174,46 @@ class EmbeddingStore:
         if mode == "template":
             return np.stack([self.template(p) for p in pids])
         return np.stack([self.sample(p, rng) for p in pids])
+
+    def disjoint_rows(self, a: str, b: str) -> tuple[np.ndarray, np.ndarray] | None:
+        """Images of a and of b such that no photo appears on both sides.
+
+        a and b may well share photos; those images are simply not used for this
+        comparison. To keep as many images as possible: take b's images from photos
+        without a (or all of b's if a is in every one), then a's images from the
+        remaining photos; if that leaves a with nothing, try the other way round.
+        Returns (rows_a, rows_b), or None if every image of both is from one photo.
+        """
+        ra, rb = self.rows[a], self.rows[b]
+        for first, second, swapped in ((rb, ra, False), (ra, rb, True)):
+            second_photos = set(self.photo[second])
+            own = first[[ph not in second_photos for ph in self.photo[first]]]
+            if len(own) == 0:
+                own = first
+            own_photos = set(self.photo[own])
+            other = second[[ph not in own_photos for ph in self.photo[second]]]
+            if len(other):
+                return (own, other) if swapped else (other, own)
+        return None
+
+    def _embed(self, rows: np.ndarray, mode: str, rng) -> np.ndarray:
+        if mode == "template":
+            return l2_normalise(self.emb[rows].mean(axis=0))
+        return self.emb[rng.choice(rows)]
+
+    def pair(self, a_list, b_list, mode: str, rng: np.random.Generator | None = None,
+             cross_photo: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Embeddings for pairs (a_i, b_i). Returns (e_a, e_b, ok); ok is False where
+        cross_photo is on and the pair has no images from different photos
+        (those rows are zero vectors and must be dropped by the caller)."""
+        a_list, b_list = list(a_list), list(b_list)
+        if not cross_photo:
+            return self.stack(a_list, mode, rng), self.stack(b_list, mode, rng), np.ones(len(a_list), bool)
+        dim = self.emb.shape[1]
+        ea, eb = np.zeros((len(a_list), dim), np.float32), np.zeros((len(a_list), dim), np.float32)
+        ok = np.zeros(len(a_list), bool)
+        for i, (a, b) in enumerate(zip(a_list, b_list)):
+            rows = self.disjoint_rows(a, b)
+            if rows is not None:
+                ea[i], eb[i], ok[i] = self._embed(rows[0], mode, rng), self._embed(rows[1], mode, rng), True
+        return ea, eb, ok

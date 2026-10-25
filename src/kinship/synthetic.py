@@ -99,10 +99,15 @@ def make_synthetic(root: str | Path, fmt: str = "kaggle", n_families: int = 40,
     base = root / ("train" if fmt == "kaggle" else "FIDs")
     pair_rows, attr_rows, truth_triplets, persons = [], [], [], {}
 
+    next_photo = 0
     for f in range(1, n_families + 1):
         fid = f"F{f:04d}"
         members, rels = _make_family(rng)
         colours = _inherited_colours(members, rels, rng)
+        # Like FIW: file names are <photo>_face<k>.jpg. Each family has a few group
+        # photos that several members appear in, plus solo photos.
+        group_photos = list(range(next_photo, next_photo + 3))
+        next_photo += 3
         for m in members:
             pid = f"{fid}/MID{m['mid']}"
             persons[pid] = {**m, "fid": fid}
@@ -110,10 +115,16 @@ def make_synthetic(root: str | Path, fmt: str = "kaggle", n_families: int = 40,
             folder = base / fid / f"MID{m['mid']}"
             folder.mkdir(parents=True, exist_ok=True)
             colour = colours[m["mid"]]
-            for k in range(int(rng.integers(images_per_person[0], images_per_person[1] + 1))):
+            unused_groups = list(group_photos)
+            for _ in range(int(rng.integers(images_per_person[0], images_per_person[1] + 1))):
+                if unused_groups and rng.random() < 0.5:
+                    photo = unused_groups.pop(int(rng.integers(len(unused_groups))))
+                else:
+                    photo, next_photo = next_photo, next_photo + 1
                 noise = rng.integers(-30, 30, size=(size, size, 3))
                 img = np.clip(colour + noise, 0, 255).astype(np.uint8)
-                Image.fromarray(img).save(folder / f"P{f:05d}_face{k}.jpg")
+                # face index = member id, so two members in one photo get different names
+                Image.fromarray(img).save(folder / f"P{photo:05d}_face{m['mid']}.jpg")
         truth_triplets += _true_triplets(fid, members, rels)
 
         if fmt == "kaggle":

@@ -93,8 +93,8 @@ def test_e0_finds_planted_signal(eval_setup, tmp_path):
 def test_e1_and_pairwise_run(eval_setup, tmp_path):
     out, store, sets = eval_setup
     tr, va = out["triplets"]["train"], out["triplets"]["val"]
-    X_tr = handcrafted_features(*triplet_embeddings(store, tr, "template"))
-    X_va = handcrafted_features(*triplet_embeddings(store, va, "template"))
+    X_tr = handcrafted_features(*triplet_embeddings(store, tr, "template")[:4])
+    X_va = handcrafted_features(*triplet_embeddings(store, va, "template")[:4])
     assert X_tr.shape == (len(tr), 8)
     scorer = ClassicalScorer("lr", [0.1, 1.0]).fit(X_tr, tr["label"], X_va, va["label"])
     assert scorer.chosen_c in (0.1, 1.0)
@@ -103,3 +103,36 @@ def test_e1_and_pairwise_run(eval_setup, tmp_path):
     pres = evaluate_pairwise_cosine("P0", "smoketest", store, {"val": out["pairs"]["val"], "test": out["pairs"]["test"]},
                                     tmp_path, seed=0)
     assert pres["modes"]["template"]["test"]["roc_auc"] > 0.6
+
+
+# ---------------------------------------------------------------------- different photos
+def _toy_store(photos_by_person):
+    """Store with one random unit vector per image; image names encode the photo."""
+    rows = [(f"F0001/{pid}/{ph}_face{i}.jpg", pid) for i, (pid, phs) in enumerate(photos_by_person.items())
+            for ph in phs]
+    index = pd.DataFrame({"image": [r[0] for r in rows], "pid": [r[1] for r in rows],
+                          "ok": True, "detected": True})
+    emb = np.random.default_rng(0).normal(size=(len(rows), 8))
+    return EmbeddingStore(emb, index)
+
+
+def test_disjoint_rows_never_share_a_photo():
+    store = _toy_store({"MID1": ["P1", "P2", "P3"], "MID2": ["P1", "P2"], "MID3": ["P1"], "MID4": ["P1"]})
+    for a, b in [("MID1", "MID2"), ("MID2", "MID1"), ("MID1", "MID3"), ("MID3", "MID1")]:
+        ra, rb = store.disjoint_rows(a, b)
+        assert len(ra) and len(rb)
+        assert not set(store.photo[ra]) & set(store.photo[rb])
+    # MID1 vs MID2: MID2's photos all contain MID1, so MID1 is restricted to P3 instead.
+    ra, rb = store.disjoint_rows("MID1", "MID2")
+    assert set(store.photo[ra]) == {"P3"} and set(store.photo[rb]) == {"P1", "P2"}
+    # Two people who only ever appear together cannot be compared.
+    assert store.disjoint_rows("MID3", "MID4") is None
+
+
+def test_xphoto_protocol_drops_matched_pairs(eval_setup, tmp_path):
+    out, store, sets = eval_setup
+    res = evaluate_triplet_scorer("E0-mean", "test", CosineScorer("mean"), store, sets, tmp_path, seed=0)
+    for proto in ("template_xphoto", "image_xphoto"):
+        m = res["modes"][proto]["test"]
+        assert m["n"] == 2 * m["n_pos"]               # still exactly 50 / 50
+        assert m["n"] + m["dropped_rows"] == len(sets["test"])

@@ -30,6 +30,19 @@ and InsightFace produces those in the same pass as the embeddings.
 
 The format is detected automatically from `paths.data_root`.
 
+## Same-photo bias and the "different photos" protocol
+
+FIW face crops are named `<photo>_face<k>.jpg`, and relatives are often cut from the
+**same photo**. In our test split, 94% of kin triplets share a photo between the
+child and at least one parent; non-kin triplets never do. Faces from one photo look
+alike for reasons unrelated to kinship (lighting, camera, colour), so a model can
+score well by recognising the photo. All experiments are therefore also scored with
+the **different-photo protocol**: a parent and the child are compared only through
+images from different photos. That is the headline number in `results.md`. The
+first run (2026-10-24, frozen ArcFace E0-mean) gave 0.862 accuracy with all photos.
+The different-photo number has not been run yet.
+Classical and learned models are trained on different-photo data for the same reason.
+
 ## Local setup and tests (CPU)
 
 ```bash

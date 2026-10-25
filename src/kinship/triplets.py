@@ -24,8 +24,10 @@ import pandas as pd
 
 from .data import KinshipDataset, pair_key, split_families
 
-TRIPLET_COLUMNS = ["F", "M", "C", "label", "kind", "neg_type", "fid", "source"]
-PAIR_COLUMNS = ["p1", "p2", "label", "rel", "fid"]
+# pair_id links each negative to the positive it was made from (same id), so
+# evaluation can drop both together and keep a set exactly 50/50.
+TRIPLET_COLUMNS = ["F", "M", "C", "label", "kind", "neg_type", "fid", "source", "pair_id"]
+PAIR_COLUMNS = ["p1", "p2", "label", "rel", "fid", "pair_id"]
 SPLITS = ("train", "val", "test")
 
 
@@ -196,7 +198,10 @@ def balance(pos: pd.DataFrame, neg: pd.DataFrame) -> pd.DataFrame:
     a positive whose negative could not be sampled is dropped together with it.
     """
     kept_pos = pos.loc[neg["_src"].tolist()] if len(neg) else pos.iloc[:0]
-    return pd.concat([kept_pos, neg.drop(columns="_src")], ignore_index=True)[TRIPLET_COLUMNS]
+    ids = np.arange(len(kept_pos))
+    out = pd.concat([kept_pos.assign(pair_id=ids), neg.drop(columns="_src").assign(pair_id=ids)],
+                    ignore_index=True)
+    return out[TRIPLET_COLUMNS]
 
 
 # ---------------------------------------------------------------------- pairs
@@ -225,16 +230,17 @@ def build_pairs(ds: KinshipDataset, pos_triplets: pd.DataFrame, split_pids: set[
         rel = pair_relation(ds, a, b) if (a, b) in oriented else "related"
         pos_rows.append({"p1": a, "p2": b, "label": 1, "rel": rel, "fid": ds.persons[a].fid})
 
-    neg_rows = []
+    kept_rows, neg_rows = [], []
     for r in pos_rows:
         other = ds.persons[r["p2"]]
         stranger = pool.sample(rng, gender=other.gender, age=other.age,
                                exclude_fids={ds.persons[r["p1"]].fid, other.fid},
                                exclude_pids={r["p1"], r["p2"]}, k=k)
         if stranger is not None:
+            r = {**r, "pair_id": len(kept_rows)}
+            kept_rows.append(r)
             neg_rows.append({**r, "p2": stranger, "label": 0})
-    n = min(len(pos_rows), len(neg_rows))
-    return pd.DataFrame(pos_rows[:n] + neg_rows[:n], columns=PAIR_COLUMNS)
+    return pd.DataFrame(kept_rows + neg_rows, columns=PAIR_COLUMNS)
 
 
 # ---------------------------------------------------------------------- everything
