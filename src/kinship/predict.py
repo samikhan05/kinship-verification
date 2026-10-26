@@ -11,10 +11,12 @@ What the demo shows, and why:
     "7 in 10 such cases were kin" on validation data.
   * Verdict: probability >= the calibrated value of the threshold chosen on
     validation.
-  * Resemblance (father X% / mother Y%): from the cosine similarities cos(F, C)
-    and cos(M, C). The attention weights of the ArcFace head do not follow who the
-    child looks like (see results.md), so they are only shown as "how much the
-    model relied on each parent".
+  * Resemblance (father X% / mother Y%): a softmax of the two face similarities
+    cos(F, C) and cos(M, C) with temperature 0.1: equal similarity gives 50/50, a
+    gap of 0.1 gives 73/27, a gap of 0.2 gives 88/12. If the child is not clearly
+    similar to either parent, the demo says so. The attention weights of the ArcFace
+    head do not follow who the child looks like (see results.md), so they are only
+    shown as "how much the model relied on each parent".
 """
 from __future__ import annotations
 
@@ -27,6 +29,8 @@ import pandas as pd
 from .align import l2_normalise
 
 DISCLAIMER = "Statistical estimate from face images. Not proof of parentage. Not a DNA test."
+RESEMBLANCE_TEMPERATURE = 0.1   # softmax temperature for the father / mother resemblance split
+WEAK_SIMILARITY = 0.05          # below this for both parents: "no clear resemblance"
 ROLES = ("father", "mother", "child")
 
 
@@ -88,9 +92,9 @@ class KinshipPredictor:
         score = float(score[0])
         prob = self.cal.prob(score)
         cos_f, cos_m = float((eF * eC).sum()), float((eM * eC).sum())
-        pos_f, pos_m = max(cos_f, 0.0), max(cos_m, 0.0)
-        share_f = 0.5 if pos_f + pos_m == 0 else pos_f / (pos_f + pos_m)
-        return {"probability": prob, "likely": prob >= self.cal.prob(self.cal.threshold),
+        share_f = float(1 / (1 + np.exp(-(cos_f - cos_m) / RESEMBLANCE_TEMPERATURE)))
+        cutoff = self.cal.prob(self.cal.threshold)
+        return {"probability": prob, "likely": prob >= cutoff, "cutoff": cutoff,
                 "raw_score": score, "resemblance_father": share_f, "resemblance_mother": 1 - share_f,
                 "cos_father_child": cos_f, "cos_mother_child": cos_m,
                 "reliance_father": float(d["alpha_F"][0]), "reliance_mother": float(d["alpha_M"][0]),
@@ -103,13 +107,17 @@ def format_result(res: dict) -> str:
         return f"### ⚠️ {res['error']}\n\n*{DISCLAIMER}*"
     verdict = "Likely their child" if res["likely"] else "Unlikely to be their child"
     lines = [f"## {verdict}",
-             f"**Kinship probability: {res['probability']:.0%}** "
-             f"(calibrated on the validation set; raw model score {res['raw_score']:.3f})", "",
-             f"**Resemblance:** father {res['resemblance_father']:.0%} / mother {res['resemblance_mother']:.0%} "
-             f"(face similarity child-father {res['cos_father_child']:.2f}, child-mother {res['cos_mother_child']:.2f})",
-             "",
-             f"Model reliance (attention weights): father {res['reliance_father']:.0%} / "
-             f"mother {res['reliance_mother']:.0%}"]
+             f"**Kinship probability: {res['probability']:.0%}** (verdict cut-off {res['cutoff']:.0%}, chosen "
+             f"on the validation set; raw model score {res['raw_score']:.3f})", ""]
+    sims = (f"face similarity child-father {res['cos_father_child']:.2f}, "
+            f"child-mother {res['cos_mother_child']:.2f}")
+    if max(res["cos_father_child"], res["cos_mother_child"]) < WEAK_SIMILARITY:
+        lines += [f"**Resemblance:** the child's face is not clearly similar to either parent ({sims})", ""]
+    else:
+        lines += [f"**Resemblance:** father {res['resemblance_father']:.0%} / mother "
+                  f"{res['resemblance_mother']:.0%} ({sims})", ""]
+    lines += [f"Model reliance (attention weights): father {res['reliance_father']:.0%} / "
+              f"mother {res['reliance_mother']:.0%}"]
     lines += [f"- {n}" for n in res["notes"]]
     lines += ["", f"*{DISCLAIMER}*"]
     return "\n".join(lines)

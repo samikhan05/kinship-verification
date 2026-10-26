@@ -33,6 +33,15 @@ pytest>=8.0
 insightface==2.1
 onnxruntime>=1.20          # CPU; on Kaggle replaced by onnxruntime-gpu==1.22.0 (see above)
 
-# Later milestones (installed on Kaggle by the notebook):
-# facenet-pytorch==2.6.0   (--no-deps, M3/M4)
-# gradio                   (M5 demo; version pinned then)
+# Demo (app.py), CPU. Also install the CPU build of torch:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+gradio==6.30.0
+scipy>=1.11
+# Windows "Smart App Control" blocks compiled files of brand-new releases until
+# they have a reputation (seen with brotli 1.2.1 and contourpy 1.4.0 on Python 3.14).
+# These slightly older builds load fine:
+brotli==1.2.0
+contourpy==1.3.3
+
+# E2b / E3 (FaceNet), installed on Kaggle by scripts/kaggle_install.sh:
+# facenet-pytorch==2.6.0   (--no-deps)
