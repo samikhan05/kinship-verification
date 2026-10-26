@@ -131,6 +131,9 @@ def contact_sheets(cfg: dict, df: pd.DataFrame, thr: float, fig_dir: Path) -> li
         make_contact_sheet(images, fig_dir / f"worst_{kind}.jpg", caps, tile=96,
                            column_titles=["father", "mother", "child"])
         out += [f"**{BEST}, {label}:**", "", f"![{label}](figures/worst_{kind}.jpg)", ""]
+    if out:
+        out += ["*These two sheets show FIW photos, so they are kept locally and not published to the "
+                "repository (the FIW license forbids redistributing its images).*", ""]
     return out
 
 

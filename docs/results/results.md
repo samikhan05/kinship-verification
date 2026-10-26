@@ -1,6 +1,6 @@
 # Results
 
-*Generated automatically by `scripts/make_report.py` on 2026-10-26 18:06 from `outputs/results/*.json`. Do not edit by hand.*
+*Generated automatically by `scripts/make_report.py` on 2026-10-26 18:10 from `outputs/results/*.json`. Do not edit by hand.*
 
 Dataset format: **fiw**, positive triplets from **matrix**.
 - train: 686 families, 1434 positive triplets ({'FMS': 726, 'FMD': 708}), balanced set 2868, hard set 0, pairs 11832
@@ -125,6 +125,8 @@ Does alpha_F rise when the child is more similar to the father than to the mothe
 **E2-hardneg, worst false negatives (kin scored as non-kin):**
 
 ![worst false negatives (kin scored as non-kin)](figures/worst_fn.jpg)
+
+*These two sheets show FIW photos, so they are kept locally and not published to the repository (the FIW license forbids redistributing its images).*
 
 ## Reference
 
