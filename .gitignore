@@ -16,3 +16,6 @@ outputs/*
 
 # Results downloaded from Kaggle (outputs.zip)
 kaggle_outputs/
+
+# Contact sheets show FIW face images: never publish them (FIW license)
+docs/results/figures/worst_*.jpg
