@@ -13,3 +13,6 @@ outputs/*
 *.npy
 *.pt
 *.onnx
+
+# Results downloaded from Kaggle (outputs.zip)
+kaggle_outputs/
